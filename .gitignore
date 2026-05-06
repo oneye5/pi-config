@@ -12,6 +12,11 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Extension build artifacts
+extension/out/
+extension/node_modules/
+extension/*.vsix
+
 # Editor artifacts
 *.swp
 *.swo

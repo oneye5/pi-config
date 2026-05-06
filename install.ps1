@@ -9,6 +9,7 @@
      no auth.json is already present in this repo.
   3. Installs @khimaros/pi-webui globally via npm (provides the drag-and-drop web UI).
   4. Runs `pi update` to reinstall any packages listed in settings.json.
+  5. Builds and installs the PI Assistant VSCode extension from extension/.
 
 .NOTES
   Run once after cloning the repo on a new machine:
@@ -60,3 +61,41 @@ if ($piCmd) {
 
 Write-Host ""
 Write-Host "Done. Open a new terminal so PI_CODING_AGENT_DIR takes effect, then run: pi"
+
+# Build and install the PI Assistant VSCode extension
+Write-Host ""
+Write-Host "==> Building PI Assistant VSCode extension"
+$extensionDir = Join-Path $repoRoot 'extension'
+
+Push-Location $extensionDir
+try {
+  npm install
+  if ($LASTEXITCODE -ne 0) { throw "npm install failed in extension/" }
+
+  npm run compile
+  if ($LASTEXITCODE -ne 0) { throw "tsc compile failed in extension/" }
+
+  npm run package
+  if ($LASTEXITCODE -ne 0) { throw "vsce package failed in extension/" }
+
+  $vsix = Get-ChildItem -Filter '*.vsix' | Select-Object -First 1
+  if ($vsix) {
+    # Use code.cmd (the CLI wrapper) rather than Code.exe (the GUI) for --install-extension
+    $codeCli = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\bin\code.cmd'
+    if (-not (Test-Path $codeCli)) { $codeCli = 'code' }
+    Write-Host "==> Installing $($vsix.Name) into VSCode"
+    & $codeCli --install-extension $vsix.FullName
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "code CLI failed — install manually: code --install-extension $($vsix.FullName)"
+    }
+  } else {
+    Write-Warning "No .vsix found after packaging — check vsce output above"
+  }
+} catch {
+  Write-Warning "Extension build failed: $_"
+} finally {
+  Pop-Location
+}
+
+Write-Host ""
+Write-Host "All done. Reload VSCode to activate the PI Assistant panel."
