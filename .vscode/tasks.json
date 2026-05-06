@@ -44,8 +44,20 @@
     {
       "label": "Open pi-webui in Simple Browser",
       "type": "shell",
-      "command": "${input:openSimpleBrowser}",
-      "dependsOn": "Start pi-webui",
+      "command": "code --open-url 'vscode://vscode.simpleBrowser/api/show?url=http%3A%2F%2F127.0.0.1%3A8787'",
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "pi-webui: Start and Open",
+      "dependsOn": ["Start pi-webui", "Open pi-webui in Simple Browser"],
+      "dependsOrder": "sequence",
+      "presentation": {
+        "reveal": "never"
+      },
       "problemMatcher": []
     }
   ]
