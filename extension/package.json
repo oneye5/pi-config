@@ -2,7 +2,7 @@
   "name": "pi-assistant",
   "displayName": "PI Assistant",
   "description": "Embedded PI coding agent chat panel for VSCode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "pi-config",
   "engines": {
     "vscode": "^1.80.0"
