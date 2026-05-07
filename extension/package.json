@@ -1,14 +1,21 @@
 {
   "name": "pi-assistant",
   "displayName": "PI Assistant",
-  "description": "Embedded PI coding agent chat panel for VSCode",
-  "version": "0.2.0",
+  "description": "Native PI coding agent chat and session UI for VSCode",
+  "version": "0.3.0",
   "publisher": "pi-config",
   "engines": {
     "vscode": "^1.80.0"
   },
-  "categories": ["Other"],
-  "activationEvents": [],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:pi-assistant.openChat",
+    "onCommand:pi-assistant.newSession",
+    "onView:pi-assistant.sessionsView"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -24,21 +31,51 @@
       "pi-assistant": [
         {
           "type": "webview",
-          "id": "pi-assistant.chatView",
-          "name": "Chat"
+          "id": "pi-assistant.sessionsView",
+          "name": "Sessions"
         }
       ]
+    },
+    "commands": [
+      {
+        "command": "pi-assistant.openChat",
+        "title": "PI Assistant: Open Chat"
+      },
+      {
+        "command": "pi-assistant.newSession",
+        "title": "PI Assistant: New Session"
+      }
+    ],
+    "configuration": {
+      "title": "PI Assistant",
+      "properties": {
+        "piAssistant.nodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the standalone Node.js executable used to run the PI backend."
+        },
+        "piAssistant.sdkPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the installed @mariozechner/pi-coding-agent package directory."
+        }
+      }
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "build": "node ./scripts/build.mjs",
+    "watch": "node ./scripts/build.mjs --watch",
+    "test": "tsx --test ./test/**/*.test.ts",
     "package": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
     "@vscode/vsce": "^3.0.0",
+    "dompurify": "^3.2.6",
+    "esbuild": "^0.25.4",
+    "marked": "^15.0.12",
+    "tsx": "^4.19.3",
     "typescript": "^5.4.0"
   }
 }

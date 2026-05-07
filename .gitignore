@@ -1,6 +1,12 @@
 # PI runtime artifacts — never commit these
 sessions/
 auth.json
+pi-config/
+
+# Environment / secrets
+.env
+.env.*
+*.env
 
 # PI managed binaries and package caches
 bin/

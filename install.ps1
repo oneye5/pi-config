@@ -7,7 +7,7 @@
   1. Sets PI_CODING_AGENT_DIR as a user-level environment variable pointing to this repo.
   2. Migrates auth.json from the old default location (~/.pi/agent/) if it exists and
      no auth.json is already present in this repo.
-  3. Installs @khimaros/pi-webui globally via npm (provides the drag-and-drop web UI).
+  3. Validates Node.js, npm, and PI prerequisites.
   4. Runs `pi update` to reinstall any packages listed in settings.json.
   5. Builds and installs the PI Assistant VSCode extension from extension/.
 
@@ -31,6 +31,20 @@ Write-Host "==> Setting PI_CODING_AGENT_DIR to '$repoRoot'"
 # Apply immediately for the current process too
 $env:PI_CODING_AGENT_DIR = $repoRoot
 
+function Assert-Command($name, $installHint) {
+  $cmd = Get-Command $name -ErrorAction SilentlyContinue
+  if (-not $cmd) {
+    throw "$name is required but was not found on PATH. $installHint"
+  }
+
+  return $cmd
+}
+
+Write-Host "==> Validating prerequisites"
+Assert-Command 'node' 'Install a standalone Node.js runtime first: https://nodejs.org/' | Out-Null
+Assert-Command 'npm' 'Install npm together with Node.js: https://nodejs.org/' | Out-Null
+$piCmd = Assert-Command 'pi' 'Install the PI SDK globally first: npm install -g @mariozechner/pi-coding-agent'
+
 # Migrate auth.json from the old default location if needed
 $oldAuth = Join-Path $env:USERPROFILE '.pi\agent\auth.json'
 $newAuth = Join-Path $repoRoot 'auth.json'
@@ -43,15 +57,7 @@ if ((Test-Path $oldAuth) -and -not (Test-Path $newAuth)) {
   Write-Host "==> No existing auth.json found — you will need to authenticate PI on first run"
 }
 
-# Install pi-webui globally
-Write-Host "==> Installing @khimaros/pi-webui via npm"
-npm install -g @khimaros/pi-webui
-if ($LASTEXITCODE -ne 0) {
-  Write-Warning "npm install failed for @khimaros/pi-webui — install manually: npm install -g @khimaros/pi-webui"
-}
-
 # Reinstall any packages listed in settings.json
-$piCmd = Get-Command pi -ErrorAction SilentlyContinue
 if ($piCmd) {
   Write-Host "==> Running 'pi update' to restore packages from settings.json"
   pi update
@@ -72,8 +78,8 @@ try {
   npm install
   if ($LASTEXITCODE -ne 0) { throw "npm install failed in extension/" }
 
-  npm run compile
-  if ($LASTEXITCODE -ne 0) { throw "tsc compile failed in extension/" }
+  npm run build
+  if ($LASTEXITCODE -ne 0) { throw "build failed in extension/" }
 
   npm run package
   if ($LASTEXITCODE -ne 0) { throw "vsce package failed in extension/" }

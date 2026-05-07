@@ -1,710 +1,587 @@
-import * as cp from 'child_process';
-import * as http from 'http';
+import * as cp from 'node:child_process';
+import * as path from 'node:path';
+
 import * as vscode from 'vscode';
 
-const WEBUI_URL = 'http://127.0.0.1:8787';
-const WEBUI_WS = 'ws://127.0.0.1:8787/ws';
-const VIEW_TYPE = 'pi-assistant.chatView';
+import { BackendClient } from './host/backend-client';
+import { getWebviewRoots, renderWebviewHtml } from './host/webview-assets';
+import { resolveCommandInvocation } from './shared/command-invocation';
+import {
+  getSdkCliPath,
+  resolveNodePath,
+  resolveSdkPath,
+  type CommandResult,
+} from './shared/runtime-resolution';
+import type {
+  BusyChangedPayload,
+  ChatMessage,
+  ErrorPayload,
+  EventEnvelope,
+  MessageAbortedPayload,
+  MessageDeltaPayload,
+  MessageFinishedPayload,
+  MessageStartedPayload,
+  MessageThinkingPayload,
+  ModelInfo,
+  ModelSettings,
+  SessionListChangedPayload,
+  SessionOpenedPayload,
+  SessionSummary,
+  ToolFinishedPayload,
+  ToolStartedPayload,
+} from './shared/protocol';
 
-type WebuiState = 'stopped' | 'starting' | 'running';
+const SIDEBAR_VIEW_TYPE = 'pi-assistant.sessionsView';
+const ACTIVE_SESSION_KEY = 'piAssistant.activeSessionPath';
+const HIDDEN_SESSION_PATHS_KEY = 'piAssistant.hiddenSessionPaths';
 
-// ---------------------------------------------------------------------------
-// Process manager
-// ---------------------------------------------------------------------------
-class PiAssistant implements vscode.Disposable {
-  private proc: cp.ChildProcess | undefined;
-  private _state: WebuiState = 'stopped';
+interface ViewState {
+  sessions: SessionSummary[];
+  hiddenSessionPaths: string[];
+  activeSession: SessionSummary | null;
+  transcript: ChatMessage[];
+  busy: boolean;
+  notice: string | null;
+  workspaceCwd: string | null;
+  systemPrompt: string | null;
+  modelSettings: ModelSettings | null;
+  availableModels: ModelInfo[];
+}
 
-  private readonly _onStateChange = new vscode.EventEmitter<WebuiState>();
-  readonly onStateChange = this._onStateChange.event;
+function getWorkspaceCwd(): string | null {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+}
 
-  getState(): WebuiState {
-    return this._state;
+function execCommand(command: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const invocation = resolveCommandInvocation(command, args);
+
+    cp.execFile(invocation.command, invocation.args, { encoding: 'utf8' }, (error, stdout, stderr) => {
+      resolve({
+        stdout,
+        stderr,
+        exitCode:
+          error && typeof error.code === 'number'
+            ? error.code
+            : error
+              ? 1
+              : 0,
+      });
+    });
+  });
+}
+
+function upsertMessage(transcript: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  const next = [...transcript];
+  const index = next.findIndex((entry) => entry.id === message.id);
+  if (index === -1) {
+    next.push(message);
+  } else {
+    next[index] = message;
+  }
+  return next;
+}
+
+function ensureAssistantMessage(transcript: ChatMessage[], messageId: string): ChatMessage[] {
+  const existing = transcript.find((entry) => entry.id === messageId);
+  if (existing) {
+    return transcript;
+  }
+
+  return [
+    ...transcript,
+    {
+      id: messageId,
+      role: 'assistant',
+      createdAt: new Date().toISOString(),
+      markdown: '',
+      status: 'streaming',
+      toolCalls: [],
+    },
+  ];
+}
+
+function updateAssistant(
+  transcript: ChatMessage[],
+  messageId: string,
+  updater: (message: ChatMessage) => ChatMessage,
+): ChatMessage[] {
+  const ensured = ensureAssistantMessage(transcript, messageId);
+  return ensured.map((message) => (message.id === messageId ? updater(message) : message));
+}
+
+class SidebarViewProvider implements vscode.WebviewViewProvider {
+  private view?: vscode.WebviewView;
+  private ready = false;
+
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly getState: () => ViewState,
+    private readonly onMessage: (message: any) => void,
+  ) {}
+
+  async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+    this.view = webviewView;
+    this.ready = false;
+
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: getWebviewRoots(this.context),
+    };
+    webviewView.webview.html = await renderWebviewHtml(this.context, webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage((message) => {
+      if (message?.type === 'ready') {
+        this.ready = true;
+        this.postState();
+        return;
+      }
+
+      this.onMessage(message);
+    });
+  }
+
+  reveal(): void {
+    this.view?.show(true);
+  }
+
+  postState(): void {
+    if (this.view && this.ready) {
+      void this.view.webview.postMessage({ type: 'state', state: this.getState() });
+    }
+  }
+
+  postDelta(messageId: string, delta: string): void {
+    if (this.view && this.ready) {
+      void this.view.webview.postMessage({ type: 'delta', messageId, delta });
+    }
+  }
+
+  postThinking(messageId: string, thinking: string): void {
+    if (this.view && this.ready) {
+      void this.view.webview.postMessage({ type: 'thinking', messageId, thinking });
+    }
+  }
+
+  postToolCall(messageId: string, toolCall: { id: string; name: string; input: unknown; result?: unknown; status: string }): void {
+    if (this.view && this.ready) {
+      void this.view.webview.postMessage({ type: 'toolCall', messageId, toolCall });
+    }
+  }
+}
+
+class PiAssistantExtension implements vscode.Disposable {
+  private readonly backend = new BackendClient();
+  private readonly statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  private readonly state: ViewState = {
+    sessions: [],
+    hiddenSessionPaths: this.context.globalState.get<string[]>(HIDDEN_SESSION_PATHS_KEY) ?? [],
+    activeSession: null,
+    transcript: [],
+    busy: false,
+    notice: null,
+    workspaceCwd: getWorkspaceCwd(),
+    systemPrompt: null,
+    modelSettings: null,
+    availableModels: [],
+  };
+
+  private readonly sidebarProvider: SidebarViewProvider;
+
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.sidebarProvider = new SidebarViewProvider(context, () => this.state, (message) => {
+      void this.handleWebviewMessage(message);
+    });
+
+    this.statusBar.command = 'pi-assistant.openChat';
+    this.statusBar.show();
+
+    this.backend.onEvent((event) => {
+      this.handleBackendEvent(event);
+    });
+
+    this.backend.onExit(({ stderr }) => {
+      this.setNotice(stderr || 'The PI Assistant backend stopped unexpectedly.');
+      this.state.busy = false;
+      this.render();
+    });
   }
 
   async start(): Promise<void> {
-    if (this._state !== 'stopped') return;
+    this.updateStatusBar('Starting');
 
-    if (await this.probe()) {
-      this.setState('running');
-      return;
-    }
+    try {
+      const config = vscode.workspace.getConfiguration('piAssistant');
+      const nodePath = resolveNodePath({
+        configuredPath: config.get<string>('nodePath'),
+        env: process.env,
+      });
+      const sdkPath = await resolveSdkPath({
+        configuredPath: config.get<string>('sdkPath'),
+        env: process.env,
+        exec: execCommand,
+      });
 
-    this.setState('starting');
+      const backendPath = this.context.asAbsolutePath(path.join('out', 'backend.js'));
+      const cwd = this.state.workspaceCwd ?? this.context.extensionPath;
 
-    this.proc = cp.spawn('pi-webui', [], {
-      stdio: 'pipe',
-      env: { ...process.env },
-      shell: true,
-    });
+      await this.backend.start({ nodePath, backendPath, sdkPath, cwd });
 
-    this.proc.on('error', (err) => {
-      vscode.window.showErrorMessage(`PI Assistant: failed to start pi-webui — ${err.message}`);
-      this.proc = undefined;
-      this.setState('stopped');
-    });
+      const restoredSessionPath = this.context.globalState.get<string>(ACTIVE_SESSION_KEY);
+      if (restoredSessionPath) {
+        try {
+          await this.backend.request('session.open', { sessionPath: restoredSessionPath });
+        } catch {
+          this.setNotice('The previously active session could not be restored.');
+        }
+      }
 
-    this.proc.on('exit', () => {
-      this.proc = undefined;
-      this.setState('stopped');
-    });
-
-    const ready = await this.waitReady();
-    if (ready) {
-      this.setState('running');
-    } else {
-      vscode.window.showWarningMessage(
-        'PI Assistant: pi-webui did not become ready — is it installed? Run: npm install -g @khimaros/pi-webui',
-      );
-      this.setState('stopped');
+      this.render();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.setNotice(message);
+      vscode.window.showErrorMessage(`PI Assistant: ${message}`);
+      this.render();
     }
   }
 
-  stop(): void {
-    this.proc?.kill();
-    this.proc = undefined;
-    this.setState('stopped');
+  register(): void {
+    this.context.subscriptions.push(
+      this.backend,
+      this.statusBar,
+      vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_TYPE, this.sidebarProvider, {
+        webviewOptions: { retainContextWhenHidden: true },
+      }),
+      vscode.commands.registerCommand('pi-assistant.openChat', () => {
+        this.sidebarProvider.reveal();
+      }),
+      vscode.commands.registerCommand('pi-assistant.newSession', async () => {
+        await this.createNewSession();
+      }),
+    );
+  }
+
+  private render(): void {
+    this.sidebarProvider.postState();
+    this.updateStatusBar(this.state.notice ? 'Error' : this.state.busy ? 'Thinking' : 'Idle');
+  }
+
+  private setNotice(notice: string | null): void {
+    this.state.notice = notice;
+  }
+
+  private updateStatusBar(state: 'Starting' | 'Idle' | 'Thinking' | 'Error'): void {
+    const text =
+      state === 'Thinking'
+        ? 'PI: Thinking'
+        : state === 'Error'
+          ? 'PI: Error'
+          : state === 'Starting'
+            ? 'PI: Starting'
+            : 'PI: Idle';
+
+    this.statusBar.text = text;
+    this.statusBar.tooltip = this.state.notice ?? 'Open PI Assistant chat';
+  }
+
+  private async createNewSession(): Promise<void> {
+    const cwd = this.state.workspaceCwd ?? this.context.extensionPath;
+
+    // Optimistic placeholder — shows a tab immediately while the backend responds.
+    const placeholder: SessionSummary = {
+      path: `__pending__:${Date.now()}`,
+      name: 'New Session…',
+      cwd,
+      modifiedAt: new Date().toISOString(),
+      messageCount: 0,
+    };
+    this.state.sessions = [...this.state.sessions.filter((s) => !s.path.startsWith('__pending__:')), placeholder];
+    this.state.activeSession = placeholder;
+    this.state.transcript = [];
+    this.state.systemPrompt = null;
+    this.render();
+
+    await this.backend.request('session.create', { cwd });
+    this.sidebarProvider.reveal();
+  }
+
+  private async openSession(sessionPath: string): Promise<void> {
+    this.showSessionTab(sessionPath);
+    await this.backend.request('session.open', { sessionPath });
+    this.sidebarProvider.reveal();
+  }
+
+  private showSessionTab(sessionPath: string): void {
+    if (!this.state.hiddenSessionPaths.includes(sessionPath)) {
+      return;
+    }
+
+    this.state.hiddenSessionPaths = this.state.hiddenSessionPaths.filter((path) => path !== sessionPath);
+    void this.context.globalState.update(HIDDEN_SESSION_PATHS_KEY, this.state.hiddenSessionPaths);
+  }
+
+  private async closeSessionTab(sessionPath: string): Promise<void> {
+    if (sessionPath === this.state.activeSession?.path && this.state.busy) {
+      this.setNotice('Interrupt the active response before closing this session tab.');
+      this.render();
+      return;
+    }
+
+    if (!this.state.hiddenSessionPaths.includes(sessionPath)) {
+      this.state.hiddenSessionPaths = [...this.state.hiddenSessionPaths, sessionPath];
+      void this.context.globalState.update(HIDDEN_SESSION_PATHS_KEY, this.state.hiddenSessionPaths);
+    }
+
+    if (sessionPath !== this.state.activeSession?.path) {
+      this.render();
+      return;
+    }
+
+    const nextSession = this.state.sessions.find(
+      (session) =>
+        session.path !== sessionPath &&
+        session.cwd === this.state.workspaceCwd &&
+        !this.state.hiddenSessionPaths.includes(session.path),
+    );
+
+    if (nextSession) {
+      await this.openSession(nextSession.path);
+      return;
+    }
+
+    await this.createNewSession();
+  }
+
+  private async handleWebviewMessage(message: any): Promise<void> {
+    if (message?.type === 'send') {
+      const text = typeof message.text === 'string' ? message.text.trim() : '';
+      if (!text || !this.state.activeSession) {
+        return;
+      }
+
+      this.state.transcript = [
+        ...this.state.transcript,
+        {
+          id: `local-user:${Date.now()}`,
+          role: 'user',
+          createdAt: new Date().toISOString(),
+          markdown: text,
+          status: 'completed',
+        },
+      ];
+      this.state.busy = true;
+      this.render();
+
+      try {
+        await this.backend.request('message.send', {
+          sessionPath: this.state.activeSession.path,
+          text,
+        });
+      } catch (error) {
+        const details = error instanceof Error ? error.message : String(error);
+        this.setNotice(details);
+        this.state.busy = false;
+        this.render();
+      }
+      return;
+    }
+
+    if (message?.type === 'interrupt') {
+      try {
+        await this.backend.request('message.interrupt', {});
+      } catch (error) {
+        const details = error instanceof Error ? error.message : String(error);
+        this.setNotice(details);
+        this.render();
+      }
+      return;
+    }
+
+    if (message?.type === 'newSession') {
+      await this.createNewSession();
+      return;
+    }
+
+    if (message?.type === 'openSession' && typeof message.sessionPath === 'string') {
+      await this.openSession(message.sessionPath);
+      return;
+    }
+
+    if (message?.type === 'closeSession' && typeof message.sessionPath === 'string') {
+      await this.closeSessionTab(message.sessionPath);
+      return;
+    }
+
+    if (message?.type === 'setModel') {
+      try {
+        const updated = await this.backend.request<ModelSettings>('settings.set', {
+          defaultModel: message.defaultModel,
+          defaultThinkingLevel: message.defaultThinkingLevel,
+        });
+        this.state.modelSettings = updated;
+        this.render();
+      } catch (error) {
+        const details = error instanceof Error ? error.message : String(error);
+        this.setNotice(details);
+        this.render();
+      }
+    }
+  }
+
+  private handleBackendEvent(event: EventEnvelope): void {
+    switch (event.event) {
+      case 'session.list.changed': {
+        const payload = event.payload as SessionListChangedPayload;
+        this.state.sessions = payload.sessions;
+        if (payload.activeSessionPath && this.state.activeSession?.path !== payload.activeSessionPath) {
+          const matching = payload.sessions.find((session) => session.path === payload.activeSessionPath);
+          if (matching) {
+            this.state.activeSession = matching;
+          }
+        }
+        this.render();
+        return;
+      }
+
+      case 'session.opened': {
+        const payload = event.payload as SessionOpenedPayload;
+        this.showSessionTab(payload.session.path);
+        this.state.activeSession = payload.session;
+        this.state.transcript = payload.transcript;
+        // busy is managed exclusively by busy.changed — do not overwrite here
+        // (session.opened fires after agent_end where isStreaming may lag)
+        this.state.systemPrompt = payload.systemPrompt ?? null;
+        this.state.modelSettings = payload.modelSettings ?? null;
+        this.state.availableModels = payload.availableModels ?? this.state.availableModels;
+        // Remove any placeholder session and replace with the real one
+        this.state.sessions = this.state.sessions.filter((s) => !s.path.startsWith('__pending__:'));
+        this.setNotice(null);
+        void this.context.globalState.update(ACTIVE_SESSION_KEY, payload.session.path);
+        this.render();
+        return;
+      }
+
+      case 'busy.changed': {
+        const payload = event.payload as BusyChangedPayload;
+        this.state.busy = payload.busy;
+        this.render();
+        return;
+      }
+
+      case 'message.started': {
+        const payload = event.payload as MessageStartedPayload;
+        this.state.transcript = ensureAssistantMessage(this.state.transcript, payload.messageId);
+        this.state.busy = true;
+        this.render();
+        return;
+      }
+
+      case 'message.delta': {
+        const payload = event.payload as MessageDeltaPayload;
+        this.state.transcript = updateAssistant(this.state.transcript, payload.messageId, (message) => ({
+          ...message,
+          markdown: `${message.markdown}${payload.delta}`,
+          status: 'streaming',
+        }));
+        // Send delta directly to the webview for smooth streaming — no full re-render.
+        this.sidebarProvider.postDelta(payload.messageId, payload.delta);
+        return;
+      }
+
+      case 'message.thinking': {
+        const payload = event.payload as MessageThinkingPayload;
+        this.state.transcript = updateAssistant(this.state.transcript, payload.messageId, (message) => ({
+          ...message,
+          thinking: `${message.thinking ?? ''}${payload.thinking}`,
+          status: 'streaming',
+        }));
+        this.sidebarProvider.postThinking(payload.messageId, payload.thinking);
+        return;
+      }
+
+      case 'tool.started': {
+        const payload = event.payload as ToolStartedPayload;
+        const newToolCall = {
+          id: payload.toolCallId,
+          name: payload.name,
+          input: payload.input,
+          status: 'running' as const,
+        };
+        this.state.transcript = updateAssistant(this.state.transcript, payload.messageId, (message) => ({
+          ...message,
+          toolCalls: [
+            ...(message.toolCalls ?? []).filter((toolCall) => toolCall.id !== payload.toolCallId),
+            newToolCall,
+          ],
+        }));
+        this.sidebarProvider.postToolCall(payload.messageId, newToolCall);
+        return;
+      }
+
+      case 'tool.finished': {
+        const payload = event.payload as ToolFinishedPayload;
+        let updatedToolCall: { id: string; name: string; input: unknown; result?: unknown; status: 'completed' | 'running' | 'failed' } | undefined;
+        this.state.transcript = updateAssistant(this.state.transcript, payload.messageId, (message) => {
+          const toolCalls = (message.toolCalls ?? []).map((toolCall) => {
+            if (toolCall.id !== payload.toolCallId) return toolCall;
+            updatedToolCall = { ...toolCall, result: payload.result, status: 'completed' };
+            return updatedToolCall;
+          });
+          return { ...message, toolCalls };
+        });
+        if (updatedToolCall) {
+          this.sidebarProvider.postToolCall(payload.messageId, updatedToolCall);
+        }
+        return;
+      }
+
+      case 'message.finished': {
+        const payload = event.payload as MessageFinishedPayload;
+        this.state.transcript = upsertMessage(this.state.transcript, payload.message);
+        // Full render on completion to reconcile any incremental DOM patches.
+        this.render();
+        return;
+      }
+
+      case 'message.aborted': {
+        const payload = event.payload as MessageAbortedPayload;
+        if (payload.messageId) {
+          this.state.transcript = updateAssistant(this.state.transcript, payload.messageId, (message) => ({
+            ...message,
+            status: 'interrupted',
+          }));
+        }
+        this.state.busy = false;
+        this.render();
+        return;
+      }
+
+      case 'error': {
+        const payload = event.payload as ErrorPayload;
+        this.setNotice(payload.message);
+        this.state.busy = false;
+        vscode.window.showErrorMessage(`PI Assistant: ${payload.message}`);
+        this.render();
+        return;
+      }
+
+      default:
+        return;
+    }
   }
 
   dispose(): void {
-    this.stop();
-    this._onStateChange.dispose();
-  }
-
-  private setState(s: WebuiState): void {
-    this._state = s;
-    this._onStateChange.fire(s);
-  }
-
-  private probe(): Promise<boolean> {
-    return new Promise((resolve) => {
-      const req = http.get(WEBUI_URL, (res) => {
-        res.destroy();
-        resolve(true);
-      });
-      req.on('error', () => resolve(false));
-      req.setTimeout(500, () => {
-        req.destroy();
-        resolve(false);
-      });
-    });
-  }
-
-  private async waitReady(attempts = 30, delayMs = 300): Promise<boolean> {
-    for (let i = 0; i < attempts; i++) {
-      if (await this.probe()) return true;
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-    return false;
+    this.backend.dispose();
+    this.statusBar.dispose();
   }
 }
 
-// ---------------------------------------------------------------------------
-// Sidebar panel
-// ---------------------------------------------------------------------------
-class PiWebviewProvider implements vscode.WebviewViewProvider {
-  private view?: vscode.WebviewView;
-  private autoOpened = false;
-
-  constructor(private readonly assistant: PiAssistant) {}
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this.view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = buildHtml(getNonce());
-
-    // Send initial state once the webview is ready to receive messages
-    // (small delay to let the webview JS initialise)
-    setTimeout(() => this.sendState(this.assistant.getState()), 100);
-
-    this.assistant.onStateChange((state) => {
-      this.sendState(state);
-      if (state === 'running' && !this.autoOpened) {
-        this.autoOpened = true;
-        openChat();
-      }
-    });
-
-    webviewView.webview.onDidReceiveMessage((msg: { command: string }) => {
-      switch (msg.command) {
-        case 'openChat':
-          openChat();
-          break;
-        case 'start':
-          this.assistant
-            .start()
-            .catch((err: Error) =>
-              vscode.window.showErrorMessage(`PI Assistant: ${err.message}`),
-            );
-          break;
-        case 'stop':
-          this.assistant.stop();
-          break;
-      }
-    });
-  }
-
-  private sendState(state: WebuiState): void {
-    this.view?.webview.postMessage({ type: 'stateChange', state });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function openChat(): void {
-  vscode.commands.executeCommand('simpleBrowser.show', WEBUI_URL);
-}
-
-function getNonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
-
-// ---------------------------------------------------------------------------
-// Webview HTML — built once; state updates arrive via postMessage
-// ---------------------------------------------------------------------------
-function buildHtml(nonce: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src ${WEBUI_WS};" />
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: transparent;
-      overflow-x: hidden;
-    }
-
-    /* ---- Status bar ---- */
-    .status-bar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
-      position: sticky;
-      top: 0;
-      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
-      z-index: 10;
-    }
-    .dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      flex-shrink: 0;
-      transition: background 0.3s;
-    }
-    .dot.running  { background: #73c991; }
-    .dot.starting { background: #e9c46a; animation: blink 1.2s ease-in-out infinite; }
-    .dot.stopped  { background: #f48771; }
-    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
-
-    .status-label {
-      flex: 1;
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .status-actions { display: flex; gap: 4px; flex-shrink: 0; }
-
-    .btn {
-      padding: 2px 8px;
-      font-size: 11px;
-      border: none;
-      border-radius: 2px;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    .btn-primary {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-    }
-    .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
-    .btn-primary:disabled { opacity: .5; cursor: default; }
-    .btn-ghost {
-      background: transparent;
-      color: var(--vscode-descriptionForeground);
-      border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.3));
-    }
-    .btn-ghost:hover {
-      background: var(--vscode-toolbar-hoverBackground);
-      color: var(--vscode-foreground);
-    }
-
-    /* ---- Current session card ---- */
-    .current-card {
-      margin: 8px;
-      padding: 8px 10px;
-      border-radius: 3px;
-      background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.08));
-      border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
-      cursor: pointer;
-    }
-    .current-card:hover { border-color: var(--vscode-focusBorder, #007fd4); }
-    .current-card .name {
-      font-size: 12px;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .current-card .meta {
-      margin-top: 4px;
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .stream-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: #73c991;
-      animation: blink 0.9s ease-in-out infinite;
-      flex-shrink: 0;
-    }
-
-    /* ---- Section headers ---- */
-    .section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 5px 10px 3px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
-      background: var(--vscode-sideBarSectionHeader-background, transparent);
-      user-select: none;
-    }
-    .section-header .icon-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px; height: 18px;
-      background: transparent;
-      border: none;
-      cursor: pointer;
-      border-radius: 3px;
-      font-size: 14px;
-      line-height: 1;
-      color: var(--vscode-descriptionForeground);
-    }
-    .section-header .icon-btn:hover {
-      background: var(--vscode-toolbar-hoverBackground);
-      color: var(--vscode-foreground);
-    }
-
-    /* ---- Session list items ---- */
-    .session-item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 5px 10px;
-      cursor: pointer;
-      border-left: 2px solid transparent;
-    }
-    .session-item:hover { background: var(--vscode-list-hoverBackground); }
-    .session-item.active {
-      border-left-color: var(--vscode-focusBorder, #007fd4);
-      background: var(--vscode-list-activeSelectionBackground);
-      color: var(--vscode-list-activeSelectionForeground);
-    }
-    .session-item .name {
-      font-size: 12px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .session-item .meta {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .session-item.active .meta { color: inherit; opacity: .8; }
-
-    /* ---- Badge ---- */
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 5px;
-      min-width: 18px;
-      height: 16px;
-      border-radius: 8px;
-      font-size: 10px;
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      flex-shrink: 0;
-    }
-
-    /* ---- Project groups (Other Projects) ---- */
-    .group-header {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 10px 4px 12px;
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      cursor: pointer;
-      user-select: none;
-    }
-    .group-header:hover { background: var(--vscode-list-hoverBackground); }
-    .group-chevron {
-      font-size: 9px;
-      transition: transform 0.15s;
-      flex-shrink: 0;
-    }
-    .group-header.collapsed .group-chevron { transform: rotate(-90deg); }
-    .group-content { }
-    .group-content.collapsed { display: none; }
-
-    /* ---- Empty / offline states ---- */
-    .empty {
-      padding: 10px 12px;
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      font-style: italic;
-    }
-    .offline {
-      padding: 16px 12px;
-      text-align: center;
-      font-size: 12px;
-      color: var(--vscode-descriptionForeground);
-    }
-    .offline p { margin-bottom: 8px; }
-    code {
-      font-family: var(--vscode-editor-font-family, monospace);
-      font-size: 11px;
-      background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.15));
-      padding: 1px 4px;
-      border-radius: 2px;
-    }
-  </style>
-</head>
-<body>
-
-  <!-- Status bar -->
-  <div class="status-bar">
-    <div class="dot stopped" id="dot"></div>
-    <span class="status-label" id="status-label">pi-webui: Stopped</span>
-    <div class="status-actions" id="status-actions">
-      <button class="btn btn-primary" onclick="send('start')">Start</button>
-    </div>
-  </div>
-
-  <!-- Current session card (shown when connected) -->
-  <div id="current-session-area"></div>
-
-  <!-- This project sessions -->
-  <div id="this-project-section" style="display:none">
-    <div class="section-header">
-      <span>This Project</span>
-      <button class="icon-btn" title="New session" onclick="newSession()">+</button>
-    </div>
-    <div id="this-project-list"></div>
-  </div>
-
-  <!-- Other projects sessions -->
-  <div id="other-projects-section" style="display:none">
-    <div class="section-header">
-      <span>Other Projects</span>
-    </div>
-    <div id="other-projects-list"></div>
-  </div>
-
-  <!-- Offline / not connected hint -->
-  <div class="offline" id="offline-hint" style="display:none">
-    <p>Not connected to pi-webui.</p>
-    <p>Start it with: <code>pi-webui</code></p>
-  </div>
-
-<script nonce="${nonce}">
-  const vscode = acquireVsCodeApi();
-
-  // ── State ──────────────────────────────────────────────────────────────────
-  let webuiState = 'stopped';
-  let ws = null;
-  let wsConnected = false;
-  let reconnectTimer = null;
-  let sessionState = null;   // session_state payload from pi-webui
-  let sessions = { currentProject: [], allProjects: [] };
-
-  // ── Extension ↔ Webview messaging ─────────────────────────────────────────
-  window.addEventListener('message', (event) => {
-    const msg = event.data;
-    if (msg.type !== 'stateChange') return;
-    webuiState = msg.state;
-    updateStatusBar();
-    if (msg.state === 'running') {
-      scheduleConnect(0);
-    } else if (msg.state === 'stopped') {
-      teardownWs();
-    }
-  });
-
-  function send(command) { vscode.postMessage({ command }); }
-
-  // ── WebSocket ──────────────────────────────────────────────────────────────
-  function scheduleConnect(delay) {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWs(); }, delay);
-  }
-
-  function connectWs() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-    ws = new WebSocket('${WEBUI_WS}');
-
-    ws.onopen = () => {
-      wsConnected = true;
-      ws.send(JSON.stringify({ type: 'ready', payload: { lastSeq: 0, sessionFile: null } }));
-      updateStatusBar();
-    };
-
-    ws.onmessage = (ev) => {
-      try { handleWsMsg(JSON.parse(ev.data)); } catch {}
-    };
-
-    ws.onclose = () => {
-      ws = null;
-      wsConnected = false;
-      sessionState = null;
-      sessions = { currentProject: [], allProjects: [] };
-      render();
-      if (webuiState === 'running') scheduleConnect(2000);
-    };
-
-    ws.onerror = () => {};
-  }
-
-  function teardownWs() {
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    if (ws) { ws.close(); ws = null; }
-    wsConnected = false;
-    sessionState = null;
-    sessions = { currentProject: [], allProjects: [] };
-    render();
-  }
-
-  function handleWsMsg(msg) {
-    switch (msg.type) {
-      case 'session_state':
-        sessionState = msg.payload;
-        renderCurrentSession();
-        break;
-      case 'sessions':
-        sessions = msg.payload;
-        renderSessionLists();
-        break;
-      case 'session_reset':
-        sessionState = null;
-        sessions = { currentProject: [], allProjects: [] };
-        renderCurrentSession();
-        renderSessionLists();
-        break;
-    }
-  }
-
-  function switchSession(path) {
-    if (!wsOpen()) return;
-    ws.send(JSON.stringify({ type: 'switch_session', payload: { sessionPath: path } }));
-    send('openChat');
-  }
-
-  function newSession() {
-    if (!wsOpen()) return;
-    ws.send(JSON.stringify({ type: 'new_session' }));
-    send('openChat');
-  }
-
-  function wsOpen() { return ws && ws.readyState === WebSocket.OPEN; }
-
-  // ── Rendering ──────────────────────────────────────────────────────────────
-  function render() {
-    updateStatusBar();
-    renderCurrentSession();
-    renderSessionLists();
-  }
-
-  function updateStatusBar() {
-    const dot = document.getElementById('dot');
-    const label = document.getElementById('status-label');
-    const actions = document.getElementById('status-actions');
-    dot.className = 'dot ' + webuiState;
-    const connected = wsConnected ? '' : webuiState === 'running' ? ' (connecting…)' : '';
-    label.textContent = 'pi-webui: ' +
-      (webuiState === 'running' ? 'Running' : webuiState === 'starting' ? 'Starting\u2026' : 'Stopped') + connected;
-    if (webuiState === 'running') {
-      actions.innerHTML =
-        '<button class="btn btn-primary" onclick="send(\'openChat\')">Open Chat</button>' +
-        '<button class="btn btn-ghost" title="Stop server" onclick="send(\'stop\')">\u25A0</button>';
-    } else if (webuiState === 'starting') {
-      actions.innerHTML = '<button class="btn btn-primary" disabled>Starting\u2026</button>';
-    } else {
-      actions.innerHTML = '<button class="btn btn-primary" onclick="send(\'start\')">Start</button>';
-    }
-  }
-
-  function renderCurrentSession() {
-    const area = document.getElementById('current-session-area');
-    const hint = document.getElementById('offline-hint');
-    if (!sessionState || !wsConnected) {
-      area.innerHTML = '';
-      hint.style.display = (webuiState === 'running' && !wsConnected) ? 'block' : 'none';
-      return;
-    }
-    hint.style.display = 'none';
-    const s = sessionState;
-    const streamDot = s.isStreaming ? '<span class="stream-dot"></span>' : '';
-    const modelText = s.model ? esc(s.model.name || s.model.id) : '';
-    const cwdText = esc(shortPath(s.cwd));
-    area.innerHTML =
-      '<div class="current-card" onclick="send(\'openChat\')" title="Open chat">' +
-        '<div class="name">' + streamDot + esc(s.sessionName || 'Unnamed session') + '</div>' +
-        '<div class="meta">' +
-          '<span title="' + esc(s.cwd) + '">' + cwdText + '</span>' +
-          (modelText ? '<span>' + modelText + '</span>' : '') +
-          '<span class="badge">' + s.messageCount + ' msg</span>' +
-        '</div>' +
-      '</div>';
-  }
-
-  function renderSessionLists() {
-    const thisSection = document.getElementById('this-project-section');
-    const otherSection = document.getElementById('other-projects-section');
-    const thisEl = document.getElementById('this-project-list');
-    const otherEl = document.getElementById('other-projects-list');
-    const activeFile = sessionState ? sessionState.sessionFile : null;
-    const currentCwd = sessionState ? sessionState.cwd : null;
-
-    // This project
-    const thisSessions = sessions.currentProject || [];
-    thisSection.style.display = thisSessions.length > 0 ? 'block' : 'none';
-    thisEl.innerHTML = renderItems(thisSessions, activeFile);
-
-    // Other projects — all sessions not in current cwd
-    const otherAll = (sessions.allProjects || []).filter(s => s.cwd !== currentCwd);
-    if (otherAll.length === 0) {
-      otherSection.style.display = 'none';
-      otherEl.innerHTML = '';
-    } else {
-      otherSection.style.display = 'block';
-      // Group by cwd
-      const groups = {};
-      for (const s of otherAll) {
-        const k = s.cwd || '(unknown)';
-        (groups[k] = groups[k] || []).push(s);
-      }
-      otherEl.innerHTML = Object.entries(groups).map(([cwd, items]) => {
-        return '<div class="group-header" onclick="toggleGroup(this)">' +
-            '<span class="group-chevron">\u25BC</span>' +
-            '<span title="' + esc(cwd) + '">' + esc(shortPath(cwd)) + '</span>' +
-          '</div>' +
-          '<div class="group-content">' + renderItems(items, activeFile) + '</div>';
-      }).join('');
-    }
-  }
-
-  function renderItems(list, activeFile) {
-    if (!list || list.length === 0) return '<div class="empty">No sessions</div>';
-    return [...list]
-      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
-      .map(s => {
-        const active = s.path === activeFile;
-        return '<div class="session-item' + (active ? ' active' : '') + '" data-path="' + esc(s.path) + '">' +
-          '<div class="name">' + esc(label(s)) + '</div>' +
-          '<div class="meta"><span>' + relTime(s.modified) + '</span><span class="badge">' + s.messageCount + '</span></div>' +
-        '</div>';
-      })
-      .join('');
-  }
-
-  // ── Event delegation for session clicks ───────────────────────────────────
-  document.addEventListener('click', (e) => {
-    const item = e.target.closest('.session-item');
-    if (item && item.dataset.path) switchSession(item.dataset.path);
-  });
-
-  function toggleGroup(header) {
-    header.classList.toggle('collapsed');
-    const content = header.nextElementSibling;
-    if (content) content.classList.toggle('collapsed');
-  }
-
-  // ── Utilities ──────────────────────────────────────────────────────────────
-  function label(s) {
-    if (s.name) return s.name;
-    if (s.firstMessage) return s.firstMessage.slice(0, 60);
-    return 'Session ' + s.id.slice(0, 8);
-  }
-
-  function shortPath(p) {
-    if (!p) return '';
-    const parts = p.replace(/\\\\/g, '/').split('/').filter(Boolean);
-    if (parts.length <= 2) return parts.join('/');
-    return '\u2026/' + parts.slice(-2).join('/');
-  }
-
-  function relTime(iso) {
-    if (!iso) return '';
-    const d = Date.now() - new Date(iso).getTime();
-    const m = Math.floor(d / 60000);
-    const h = Math.floor(d / 3600000);
-    const dy = Math.floor(d / 86400000);
-    if (m < 1) return 'just now';
-    if (m < 60) return m + 'm ago';
-    if (h < 24) return h + 'h ago';
-    if (dy < 30) return dy + 'd ago';
-    return new Date(iso).toLocaleDateString();
-  }
-
-  function esc(s) {
-    if (!s) return '';
-    return String(s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  // ── Init ───────────────────────────────────────────────────────────────────
-  render();
-</script>
-</body>
-</html>`;
-}
-
-// ---------------------------------------------------------------------------
-// Extension entry points
-// ---------------------------------------------------------------------------
 export function activate(context: vscode.ExtensionContext): void {
-  const assistant = new PiAssistant();
-  context.subscriptions.push(assistant);
+  const extension = new PiAssistantExtension(context);
+  extension.register();
+  context.subscriptions.push(extension);
 
-  const provider = new PiWebviewProvider(assistant);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(VIEW_TYPE, provider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
-  );
-
-  assistant.start().catch(() => {
-    /* surfaced via showErrorMessage inside start() */
-  });
+  void extension.start();
 }
 
 export function deactivate(): void {}
