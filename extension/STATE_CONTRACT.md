@@ -28,6 +28,7 @@
 - If a patch cannot be delivered, the host marks the stream dirty instead of advancing revision.
 - When visibility returns, the next host-to-webview sync is a full snapshot.
 - The webview clears overlay/transient UI when the host instance changes or the active session changes.
+- A busy `session.opened` refresh may update tab/session metadata, but it must not discard in-memory optimistic or streaming transcript state that is newer than the backend snapshot.
 
 ## Execution Ordering
 

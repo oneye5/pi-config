@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 
 import { BackendClient } from './backend-client';
 import { assertInvariant, auditLog } from './state-audit';
+import { resolveSessionOpenedTranscript } from './session-opened-transcript';
 import {
   getSessionByPath,
   sessionsActions,
@@ -648,13 +649,21 @@ export class SessionService implements vscode.Disposable {
     if (shouldActivate) {
       store.dispatch(sessionsActions.setActiveSessionPath(session.path));
     }
-    store.dispatch(
-      transcriptActions.setTranscript({
-        sessionPath: session.path,
-        transcript,
-        systemPrompts,
-      }),
-    );
+    const transcriptResolution = resolveSessionOpenedTranscript({
+      busy: payload.busy,
+      incomingTranscript: transcript,
+      localTranscript: store.getState().transcript.bySession[session.path] ?? [],
+    });
+
+    if (!transcriptResolution.preserveLocal) {
+      store.dispatch(
+        transcriptActions.setTranscript({
+          sessionPath: session.path,
+          transcript: transcriptResolution.transcript,
+          systemPrompts,
+        }),
+      );
+    }
 
     if (modelSettings) {
       store.dispatch(settingsActions.setModelSettings(modelSettings));
