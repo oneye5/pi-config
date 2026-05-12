@@ -3,6 +3,11 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 import { BackendClient } from './backend-client';
+import { buildRestoredSessionPlan } from './restored-session-plan';
+import {
+  shouldFlashFinishedTab,
+  type SessionCompletionEvent,
+} from './completion-notification';
 import { assertInvariant, auditLog } from './state-audit';
 import { resolveSessionOpenedTranscript } from './session-opened-transcript';
 import {
@@ -48,11 +53,14 @@ import type {
 } from '../shared/protocol';
 
 const OPEN_TABS_STORAGE_KEY = 'openTabPaths';
+const ACTIVE_SESSION_STORAGE_KEY = 'activeSessionPath';
 const PREFS_STORAGE_KEY = 'chatPrefs';
+const SDK_PATH_CACHE_KEY = 'resolvedSdkPath';
 
 type ScheduleRender = () => void;
 type PostPatch = (op: PatchOp) => void;
 type PostImperative = (message: HostToWebviewMessage) => void;
+type OnSessionCompleted = (event: SessionCompletionEvent) => void;
 
 type SelectionRequest = {
   token: string;
@@ -78,6 +86,8 @@ export class SessionService implements vscode.Disposable {
   private lifecycleQueue = Promise.resolve();
   private readonly sessionOperationQueues = new Map<string, Promise<void>>();
   private readonly selectionRequests = new Map<string, SelectionRequest>();
+  private readonly preloadingSessionPaths = new Set<string>();
+  private readonly suppressNextCompletionNotification = new Set<string>();
   private pendingSessionCounter = 0;
   private selectionRequestCounter = 0;
   private currentSelectionToken: string | null = null;
@@ -88,6 +98,7 @@ export class SessionService implements vscode.Disposable {
     private readonly scheduleRender: ScheduleRender,
     private readonly postPatch: PostPatch,
     private readonly postImperative: PostImperative,
+    private readonly onSessionCompleted?: OnSessionCompleted,
   ) {}
 
   async start(): Promise<void> {
@@ -100,6 +111,8 @@ export class SessionService implements vscode.Disposable {
     this.busySeqMap.clear();
     this.sessionOperationQueues.clear();
     this.selectionRequests.clear();
+    this.preloadingSessionPaths.clear();
+    this.suppressNextCompletionNotification.clear();
     this.currentSelectionToken = null;
     store.dispatch(sessionsActions.clearRunningPaths());
     store.dispatch(uiActions.setBackendReady(false));
@@ -389,6 +402,7 @@ export class SessionService implements vscode.Disposable {
           sessionPath: activeSessionPath,
         });
       });
+      this.suppressNextCompletionNotification.add(activeSessionPath);
     } catch (err) {
       store.dispatch(
         uiActions.setNotice(`Failed to interrupt: ${(err as Error).message}`),
@@ -439,6 +453,9 @@ export class SessionService implements vscode.Disposable {
   setPrefs(prefs: Partial<ChatPrefs>): void {
     store.dispatch(uiActions.setPrefs(prefs));
     const merged = { ...store.getState().ui.prefs, ...prefs };
+    if (merged.suppressCompletionNotifications) {
+      store.dispatch(sessionsActions.clearUnreadFinishedSessions());
+    }
     void this.context.globalState.update(PREFS_STORAGE_KEY, merged);
     // Intentionally no scheduleRender() here — the caller posts a snapshot immediately.
   }
@@ -449,6 +466,8 @@ export class SessionService implements vscode.Disposable {
     this.busySeqMap.clear();
     this.sessionOperationQueues.clear();
     this.selectionRequests.clear();
+    this.preloadingSessionPaths.clear();
+    this.suppressNextCompletionNotification.clear();
     this.currentSelectionToken = null;
 
     const workspaceCwd = this.resolveWorkspaceCwd();
@@ -463,6 +482,8 @@ export class SessionService implements vscode.Disposable {
     // Restore previously open tabs.
     const rawTabs = this.context.globalState.get<unknown[]>(OPEN_TABS_STORAGE_KEY) ?? [];
     const restoredTabs = normalizeStoredOpenTabPaths(rawTabs);
+    const preferredStartupPath = this.context.globalState.get<string>(ACTIVE_SESSION_STORAGE_KEY) ?? null;
+    const restoredSessionPlan = buildRestoredSessionPlan(restoredTabs, preferredStartupPath);
     store.dispatch(sessionsActions.setOpenTabPaths(restoredTabs));
 
     // Seed the sessions store with cached names so tabs render with correct
@@ -491,15 +512,26 @@ export class SessionService implements vscode.Disposable {
 
     try {
       const config = vscode.workspace.getConfiguration('piAssistant');
+      const configuredSdkPath = config.get<string>('sdkPath')?.trim() || undefined;
+      const envSdkPath = process.env.PI_SDK_PATH?.trim() || undefined;
+      const shouldUseSdkCache = !configuredSdkPath && !envSdkPath;
+      const cachedSdkPath = shouldUseSdkCache
+        ? this.context.globalState.get<string>(SDK_PATH_CACHE_KEY)
+        : undefined;
+
       nodePath = resolveNodePath({
         configuredPath: config.get<string>('nodePath'),
         env: process.env as NodeJS.ProcessEnv,
       });
       sdkPath = await resolveSdkPath({
-        configuredPath: config.get<string>('sdkPath'),
+        configuredPath: configuredSdkPath,
+        cachedPath: cachedSdkPath,
         env: process.env as NodeJS.ProcessEnv,
-      exec: createCommandExecutor(),
+        exec: createCommandExecutor(),
       });
+      if (shouldUseSdkCache) {
+        void this.context.globalState.update(SDK_PATH_CACHE_KEY, sdkPath);
+      }
     } catch (err) {
       store.dispatch(
         uiActions.setNotice(
@@ -526,19 +558,29 @@ export class SessionService implements vscode.Disposable {
       return;
     }
 
+    const { startupPath: restoredStartupPath, preloadPaths } = restoredSessionPlan;
+
+    if (restoredStartupPath) {
+      // Restore the last active tab first, then warm the remaining tabs in the
+      // background so tab switches can reuse cached transcripts.
+      this.openSession(restoredStartupPath);
+      this.preloadSessions(preloadPaths);
+    }
+
     store.dispatch(uiActions.setBackendReady(true));
     this.scheduleRender();
 
-    // Load initial session list and restore the most-recently open tab.
+    if (restoredStartupPath) {
+      return;
+    }
+
+    // Without a restored tab, we need the session list to know what to open.
     try {
       const sessions = await this.backend.request<SessionSummary[]>('session.list');
       store.dispatch(sessionsActions.replaceSessionSummaries(sessions));
       this.scheduleRender();
 
-      const toOpen = restoredTabs.length > 0
-        ? restoredTabs[0]
-        : sessions[0]?.path;
-
+      const toOpen = sessions[0]?.path;
       if (toOpen) {
         this.openSession(toOpen);
       }
@@ -714,6 +756,8 @@ export class SessionService implements vscode.Disposable {
         sessionPath,
         messageId: payload.messageId,
         requestId: payload.requestId,
+        modelId: payload.modelId,
+        thinkingLevel: payload.thinkingLevel,
       }),
     );
     this.scheduleRender();
@@ -894,9 +938,33 @@ export class SessionService implements vscode.Disposable {
       this.busySeqMap.set(sessionPath, payload.seq);
     }
 
+    const state = store.getState();
+    const wasRunning = state.sessions.runningSessionPaths.includes(sessionPath);
+
+    if (payload.busy) {
+      this.suppressNextCompletionNotification.delete(sessionPath);
+    }
+
     store.dispatch(
       sessionsActions.setSessionRunning({ sessionPath, running: payload.busy }),
     );
+
+    if (wasRunning && !payload.busy && !this.suppressNextCompletionNotification.delete(sessionPath)) {
+      if (
+        state.sessions.openTabPaths.includes(sessionPath) &&
+        shouldFlashFinishedTab({
+          suppressNotifications: state.ui.prefs.suppressCompletionNotifications,
+          sessionIsActive: state.sessions.activeSessionPath === sessionPath,
+        })
+      ) {
+        store.dispatch(sessionsActions.markSessionFinishedUnread(sessionPath));
+      }
+
+      this.onSessionCompleted?.({
+        sessionPath,
+      });
+    }
+
     this.scheduleRender();
   }
 
@@ -1056,6 +1124,8 @@ export class SessionService implements vscode.Disposable {
   private clearSessionScope(sessionPath: string, removeSessionSummary = false): void {
     this.busySeqMap.delete(sessionPath);
     this.sessionOperationQueues.delete(sessionPath);
+    this.preloadingSessionPaths.delete(sessionPath);
+    this.suppressNextCompletionNotification.delete(sessionPath);
     store.dispatch(transcriptActions.clearSessionState(sessionPath));
     if (removeSessionSummary) {
       store.dispatch(sessionsActions.removeSession(sessionPath));
@@ -1083,7 +1153,7 @@ export class SessionService implements vscode.Disposable {
   }
 
   private saveOpenTabs(): void {
-    const { openTabPaths, sessions } = store.getState().sessions;
+    const { openTabPaths, sessions, activeSessionPath } = store.getState().sessions;
 
     const tabObjects = openTabPaths
       .filter((p) => !isPendingTabPath(p))
@@ -1092,7 +1162,47 @@ export class SessionService implements vscode.Disposable {
         return session ? { path: p, name: session.name } : { path: p };
       });
 
+    const persistedActiveSessionPath =
+      activeSessionPath &&
+      !isPendingTabPath(activeSessionPath) &&
+      openTabPaths.includes(activeSessionPath)
+        ? activeSessionPath
+        : undefined;
+
     void this.context.globalState.update(OPEN_TABS_STORAGE_KEY, tabObjects);
+    void this.context.globalState.update(ACTIVE_SESSION_STORAGE_KEY, persistedActiveSessionPath);
+  }
+
+  private preloadSessions(sessionPaths: readonly string[]): void {
+    for (const sessionPath of sessionPaths) {
+      this.preloadSession(sessionPath);
+    }
+  }
+
+  private preloadSession(sessionPath: string): void {
+    if (!sessionPath || isPendingTabPath(sessionPath)) {
+      return;
+    }
+
+    if (this.preloadingSessionPaths.has(sessionPath)) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(store.getState().transcript.bySession, sessionPath)) {
+      return;
+    }
+
+    this.preloadingSessionPaths.add(sessionPath);
+    void this.backend.request('session.preload', { sessionPath })
+      .catch((error) => {
+        auditLog(this.context, 'session-service', 'session.preload.failed', {
+          sessionPath,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        this.preloadingSessionPaths.delete(sessionPath);
+      });
   }
 }
 

@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  CHAT_PREF_MENU_SECTIONS,
+  getChatPrefContextKey,
+  getChatPrefContextLabel,
+  getChatPrefContextValue,
+  toggleChatPref,
+  toggleChatPrefForContext,
+} from '../src/webview/panel/chat-prefs';
+import type { ChatPrefs } from '../src/shared/protocol';
+
+const prefs: ChatPrefs = {
+  autoExpandReasoning: false,
+  autoExpandToolCalls: true,
+  suppressCompletionNotifications: false,
+};
+
+test('chat pref menu sections expose transcript and notification toggles', () => {
+  assert.equal(CHAT_PREF_MENU_SECTIONS.length, 2);
+  assert.equal(CHAT_PREF_MENU_SECTIONS[0]?.id, 'transcript');
+  assert.deepEqual(
+    CHAT_PREF_MENU_SECTIONS[0]?.items.map((item) => item.key),
+    ['autoExpandReasoning', 'autoExpandToolCalls'],
+  );
+  assert.equal(CHAT_PREF_MENU_SECTIONS[1]?.id, 'notifications');
+  assert.deepEqual(
+    CHAT_PREF_MENU_SECTIONS[1]?.items.map((item) => item.key),
+    ['suppressCompletionNotifications'],
+  );
+});
+
+test('context helpers map transcript block types to the right pref metadata', () => {
+  assert.equal(getChatPrefContextKey('reasoning'), 'autoExpandReasoning');
+  assert.equal(getChatPrefContextKey('toolCalls'), 'autoExpandToolCalls');
+  assert.equal(getChatPrefContextLabel('reasoning'), 'Auto-expand reasoning');
+  assert.equal(getChatPrefContextLabel('toolCalls'), 'Auto-expand tool calls');
+  assert.equal(getChatPrefContextValue(prefs, 'reasoning'), false);
+  assert.equal(getChatPrefContextValue(prefs, 'toolCalls'), true);
+});
+
+test('toggle helpers return partial pref patches without mutating source prefs', () => {
+  assert.deepEqual(toggleChatPref(prefs, 'autoExpandReasoning'), { autoExpandReasoning: true });
+  assert.deepEqual(toggleChatPref(prefs, 'suppressCompletionNotifications'), {
+    suppressCompletionNotifications: true,
+  });
+  assert.deepEqual(toggleChatPrefForContext(prefs, 'toolCalls'), { autoExpandToolCalls: false });
+  assert.deepEqual(prefs, {
+    autoExpandReasoning: false,
+    autoExpandToolCalls: true,
+    suppressCompletionNotifications: false,
+  });
+});

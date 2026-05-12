@@ -7,15 +7,15 @@ import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import type {
   ChatPrefs,
   HostToWebviewMessage,
-  ModelInfo,
-  ModelSettings,
-  SessionSummary,
   ThinkingLevel,
   ViewState,
   WebviewToHostMessage,
 } from '../../shared/protocol';
+import { DEFAULT_CHAT_PREFS } from '../../shared/protocol';
 import { emptyOverlay, applyPatch } from './overlay';
+import { resolvePanelSurface } from './panel-state';
 import { TranscriptView } from './transcript';
+import { getChatPrefContextLabel, getChatPrefContextValue, toggleChatPrefForContext } from './chat-prefs';
 import { SessionTabs, Composer } from './ui';
 
 // ─── VS Code API ─────────────────────────────────────────────────────────────
@@ -38,6 +38,7 @@ const EMPTY_VIEW_STATE: ViewState = {
   sessions: [],
   openTabPaths: [],
   runningSessionPaths: [],
+  unreadFinishedSessionPaths: [],
   activeSession: null,
   transcript: [],
   busy: false,
@@ -48,7 +49,11 @@ const EMPTY_VIEW_STATE: ViewState = {
   modelSettings: null,
   availableModels: [],
   contextUsage: null,
-  prefs: { autoExpandReasoning: false, autoExpandToolCalls: false },
+  prefs: {
+    autoExpandReasoning: DEFAULT_CHAT_PREFS.autoExpandReasoning,
+    autoExpandToolCalls: DEFAULT_CHAT_PREFS.autoExpandToolCalls,
+    suppressCompletionNotifications: DEFAULT_CHAT_PREFS.suppressCompletionNotifications,
+  },
 };
 
 // ─── ContextMenu ─────────────────────────────────────────────────────────────
@@ -91,8 +96,9 @@ function ContextMenu({
 
   const isReasoning = menu.type === 'reasoning';
   const isMessage = menu.type === 'message';
-  const checked = isReasoning ? prefs.autoExpandReasoning : prefs.autoExpandToolCalls;
-  const expandLabel = isReasoning ? 'Expand reasoning by default' : 'Expand tool calls by default';
+  const prefType = isReasoning ? 'reasoning' : 'toolCalls';
+  const checked = getChatPrefContextValue(prefs, prefType);
+  const expandLabel = getChatPrefContextLabel(prefType);
 
   return (
     <div ref={ref} class="block-context-menu" style={style} onMouseDown={(e) => e.stopPropagation()}>
@@ -101,7 +107,7 @@ function ContextMenu({
           class="context-menu-item"
           type="button"
           onClick={() => {
-            onSetPrefs(isReasoning ? { autoExpandReasoning: !checked } : { autoExpandToolCalls: !checked });
+            onSetPrefs(toggleChatPrefForContext(prefs, prefType));
             onClose();
           }}
         >
@@ -287,11 +293,13 @@ function App() {
   }, []);
 
   const {
-    sessions, openTabPaths, runningSessionPaths, activeSession,
+    sessions, openTabPaths, runningSessionPaths, unreadFinishedSessionPaths, activeSession,
     transcript, busy, notice, backendReady, workspaceCwd, modelSettings, availableModels, contextUsage, prefs, systemPrompts,
   } = viewState;
 
-  const hasActiveTabs = openTabPaths.length > 0;
+  const panelSurface = resolvePanelSurface({ backendReady, notice, openTabPaths });
+  const hasActiveTabs = panelSurface === 'session';
+  const showSessionChrome = panelSurface !== 'loading';
 
   return (
     <div id="app">
@@ -309,20 +317,28 @@ function App() {
         </div>
       )}
 
-      <SessionTabs
-        sessions={sessions}
-        openTabPaths={openTabPaths}
-        runningSessionPaths={runningSessionPaths}
-        activeSession={activeSession}
-        backendReady={backendReady}
-        onSelect={handleSelectTab}
-        onClose={handleCloseTab}
-        onMove={handleMoveTab}
-        onNew={handleNewSession}
-      />
+      {showSessionChrome && (
+        <SessionTabs
+          sessions={sessions}
+          openTabPaths={openTabPaths}
+          runningSessionPaths={runningSessionPaths}
+          unreadFinishedSessionPaths={unreadFinishedSessionPaths}
+          activeSession={activeSession}
+          backendReady={backendReady}
+          onSelect={handleSelectTab}
+          onClose={handleCloseTab}
+          onMove={handleMoveTab}
+          onNew={handleNewSession}
+        />
+      )}
 
       <div class="panel-main">
-        {!hasActiveTabs ? (
+        {panelSurface === 'loading' ? (
+          <div class="empty-state">
+            <div class="empty-state-title">Starting PI Assistant</div>
+            <div class="empty-state-sub">Restoring sessions and starting the backend.</div>
+          </div>
+        ) : !hasActiveTabs ? (
           <div class="empty-state">
             <div class="empty-state-title">Start a session</div>
             <div class="empty-state-sub">
@@ -334,6 +350,7 @@ function App() {
           </div>
         ) : (
           <TranscriptView
+            sessionKey={activeSession?.path ?? null}
             transcript={transcript}
             busy={busy}
             overlay={overlay}
@@ -350,12 +367,13 @@ function App() {
         )}
       </div>
 
-      {hasActiveTabs && (
+      {hasActiveTabs && backendReady && (
         <Composer
           busy={busy}
           modelSettings={modelSettings}
           availableModels={availableModels}
           contextUsage={contextUsage}
+          prefs={prefs}
           systemPrompts={systemPrompts}
           transcript={transcript}
           draftRestore={draftRestore}
@@ -366,6 +384,7 @@ function App() {
           onOpenFilePicker={handleOpenFilePicker}
           onRemovePath={(p) => setPendingPaths((prev) => prev.filter((x) => x !== p))}
           onModelChange={handleModelChange}
+          onSetPrefs={handleSetPrefs}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatMessagePart, SessionSummary, ToolCall } from '../shared/protocol';
+import type { ChatMessage, ChatMessagePart, SessionSummary, ThinkingLevel, ToolCall } from '../shared/protocol';
 
 type MessageRole =
   | 'user'
@@ -22,6 +22,8 @@ interface MessageLike {
   role: MessageRole;
   content?: string | ContentPart[];
   timestamp?: number;
+  provider?: string;
+  model?: string;
   toolCallId?: string;
   toolName?: string;
   details?: unknown;
@@ -52,6 +54,8 @@ export interface SessionEntryLike {
   type: string;
   summary?: string;
   tokensBefore?: number;
+  thinkingLevel?: string;
+  modelId?: string;
   message?: MessageLike;
   customType?: string;
   display?: boolean;
@@ -85,23 +89,18 @@ function thinkingFromParts(parts: ContentPart[] | undefined): string | undefined
   return thinking || undefined;
 }
 
-function toolCallsFromParts(parts: ContentPart[] | undefined): ToolCall[] | undefined {
-  if (!parts) {
-    return undefined;
+function normalizeThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+  switch (value) {
+    case 'off':
+    case 'minimal':
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+      return value;
+    default:
+      return undefined;
   }
-
-  const toolCalls = parts
-    .filter((part) => part.type === 'toolCall' && part.id && part.name)
-    .map(
-      (part): ToolCall => ({
-        id: part.id!,
-        name: part.name!,
-        input: part.arguments ?? {},
-        status: 'running',
-      }),
-    );
-
-  return toolCalls.length > 0 ? toolCalls : undefined;
 }
 
 function cloneToolCall(toolCall: ToolCall): ToolCall {
@@ -284,7 +283,12 @@ export function summarizeSession(info: SessionInfoLike, modelId?: string): Sessi
   };
 }
 
-export function mapAssistantMessage(messageId: string, message: MessageLike, durationMs?: number): ChatMessage {
+export function mapAssistantMessage(
+  messageId: string,
+  message: MessageLike,
+  durationMs?: number,
+  metadata?: { modelId?: string; thinkingLevel?: ThinkingLevel },
+): ChatMessage {
   const parts = Array.isArray(message.content) ? message.content : undefined;
   const messageParts = assistantPartsFromContent(parts, 'completed');
   return {
@@ -294,6 +298,8 @@ export function mapAssistantMessage(messageId: string, message: MessageLike, dur
     markdown: textFromParts(parts),
     parts: messageParts,
     thinking: thinkingFromParts(parts),
+    modelId: message.model ?? metadata?.modelId,
+    thinkingLevel: metadata?.thinkingLevel,
     status: assistantStatus(message),
     toolCalls: toolCallsFromMessageParts(messageParts),
     durationMs,
@@ -303,8 +309,22 @@ export function mapAssistantMessage(messageId: string, message: MessageLike, dur
 export function mapTranscript(entries: SessionEntryLike[]): ChatMessage[] {
   const transcript: ChatMessage[] = [];
   let currentAssistant: ChatMessage | undefined;
+  let currentModelId: string | undefined;
+  let currentThinkingLevel: ThinkingLevel | undefined;
 
   for (const entry of entries) {
+    if (entry.type === 'model_change') {
+      currentModelId = entry.modelId;
+      currentAssistant = undefined;
+      continue;
+    }
+
+    if (entry.type === 'thinking_level_change') {
+      currentThinkingLevel = normalizeThinkingLevel(entry.thinkingLevel);
+      currentAssistant = undefined;
+      continue;
+    }
+
     if (entry.type === 'message' && entry.message) {
       const message = entry.message;
 
@@ -330,6 +350,11 @@ export function mapTranscript(entries: SessionEntryLike[]): ChatMessage[] {
         const durationMs = typeof message.timestamp === 'number' && entryTs > message.timestamp
           ? entryTs - message.timestamp
           : undefined;
+        const assistantModelId = message.model ?? currentModelId;
+        const assistantThinkingLevel = currentThinkingLevel;
+        if (message.model) {
+          currentModelId = message.model;
+        }
 
         if (currentAssistant) {
           // Merge continuation turn into the existing assistant message bubble.
@@ -349,6 +374,12 @@ export function mapTranscript(entries: SessionEntryLike[]): ChatMessage[] {
           appendAssistantParts(currentAssistant, messageParts, true);
           currentAssistant.toolCalls = toolCallsFromMessageParts(currentAssistant.parts);
           currentAssistant.status = assistantStatus(message);
+          if (assistantModelId) {
+            currentAssistant.modelId = assistantModelId;
+          }
+          if (assistantThinkingLevel) {
+            currentAssistant.thinkingLevel = assistantThinkingLevel;
+          }
           if (durationMs !== undefined) {
             currentAssistant.durationMs = (currentAssistant.durationMs ?? 0) + durationMs;
           }
@@ -360,6 +391,8 @@ export function mapTranscript(entries: SessionEntryLike[]): ChatMessage[] {
             markdown: parts ? textFromParts(parts) : '',
             parts: messageParts,
             thinking: parts ? thinkingFromParts(parts) : undefined,
+            modelId: assistantModelId,
+            thinkingLevel: assistantThinkingLevel,
             status: assistantStatus(message),
             toolCalls: toolCallsFromMessageParts(messageParts),
             durationMs,

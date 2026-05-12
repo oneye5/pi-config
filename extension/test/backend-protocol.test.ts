@@ -202,7 +202,7 @@ test('session.open triggers session.opened EventEnvelope', async () => {
       id: 'claude-mock',
       name: 'Claude Mock',
       provider: 'mock',
-      reasoning: false,
+      reasoning: true,
       contextWindow: 200000,
       maxTokens: 8192,
     }]);
@@ -276,13 +276,22 @@ test('message.send triggers full streaming sequence', async () => {
     assert.ok(seqs[i] > seqs[i - 1], `Busy seq should be monotonically increasing (${seqs[i - 1]} → ${seqs[i]})`);
   }
 
+  const startedEvent = events.find((e) => e.event === 'message.started') as
+    | { event: string; payload: { modelId?: string; thinkingLevel?: string } }
+    | undefined;
+  assert.ok(startedEvent, 'message.started event should exist');
+  assert.equal(startedEvent?.payload.modelId, 'claude-mock');
+  assert.equal(startedEvent?.payload.thinkingLevel, 'medium');
+
   // message.finished payload should have a completed message
   const finishedEvent = events.find((e) => e.event === 'message.finished') as
-    | { event: string; payload: { message: { status: string; markdown: string } } }
+    | { event: string; payload: { message: { status: string; markdown: string; modelId?: string; thinkingLevel?: string } } }
     | undefined;
   assert.ok(finishedEvent, 'message.finished event should exist');
   assert.equal(finishedEvent?.payload.message.status, 'completed');
   assert.equal(typeof finishedEvent?.payload.message.markdown, 'string');
+  assert.equal(finishedEvent?.payload.message.modelId, 'claude-mock');
+  assert.equal(finishedEvent?.payload.message.thinkingLevel, 'medium');
   } finally {
     await shutdown();
   }

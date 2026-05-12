@@ -1,6 +1,11 @@
 ﻿import * as vscode from 'vscode';
 
 import { BackendClient } from './backend-client';
+import {
+  requestWindowAttention,
+  shouldShowCompletionNotification,
+  type SessionCompletionEvent,
+} from './completion-notification';
 import { selectActiveSessionPath, selectViewState, store } from './store';
 import { SidebarViewProvider } from './sidebar-provider';
 import { SessionService } from './session-service';
@@ -23,6 +28,9 @@ export class PiAssistantExtension implements vscode.Disposable {
       () => this.scheduleRender(),
       (op) => this.sidebarProvider.postPatch(op),
       (message) => this.sidebarProvider.postImperative(message),
+      (event) => {
+        this.handleSessionCompleted(event);
+      },
     );
 
     this.sidebarProvider = new SidebarViewProvider(
@@ -126,6 +134,24 @@ export class PiAssistantExtension implements vscode.Disposable {
 
     this.statusBar.text = text;
     this.statusBar.tooltip = notice ?? 'Open PI Assistant chat';
+  }
+
+  private handleSessionCompleted(_event: SessionCompletionEvent): void {
+    const state = store.getState();
+    const suppressNotifications = state.ui.prefs.suppressCompletionNotifications;
+    const windowFocused = vscode.window.state.focused;
+
+    if (!shouldShowCompletionNotification({
+      suppressNotifications,
+      windowFocused,
+    })) {
+      return;
+    }
+
+    requestWindowAttention(
+      vscode.env.appName,
+      vscode.workspace.name ?? vscode.workspace.workspaceFolders?.[0]?.name,
+    );
   }
 
   private async handleWebviewMessage(msg: WebviewToHostMessage): Promise<void> {

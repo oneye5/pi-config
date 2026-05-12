@@ -21,6 +21,7 @@ interface SessionsState {
   sessions: SessionSummary[];
   openTabPaths: string[];
   runningSessionPaths: string[];
+  unreadFinishedSessionPaths: string[];
   activeSessionPath: string | null;
   workspaceCwd: string | null;
 }
@@ -39,6 +40,7 @@ function removeSessionsMatching(
   state.sessions = state.sessions.filter((session) => !removedPaths.has(session.path));
   state.openTabPaths = state.openTabPaths.filter((path) => !removedPaths.has(path));
   state.runningSessionPaths = state.runningSessionPaths.filter((path) => !removedPaths.has(path));
+  state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths.filter((path) => !removedPaths.has(path));
   if (state.activeSessionPath && removedPaths.has(state.activeSessionPath)) {
     state.activeSessionPath = null;
   }
@@ -67,6 +69,7 @@ const sessionsSlice = createSlice({
     sessions: [],
     openTabPaths: [],
     runningSessionPaths: [],
+    unreadFinishedSessionPaths: [],
     activeSessionPath: null,
     workspaceCwd: null,
   } as SessionsState,
@@ -76,6 +79,8 @@ const sessionsSlice = createSlice({
     },
     setOpenTabPaths(state, action: PayloadAction<string[]>) {
       state.openTabPaths = action.payload;
+      state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
+        .filter((path) => action.payload.includes(path));
     },
     ensureOpenTab(state, action: PayloadAction<string>) {
       if (!state.openTabPaths.includes(action.payload)) {
@@ -84,6 +89,8 @@ const sessionsSlice = createSlice({
     },
     removeOpenTab(state, action: PayloadAction<string>) {
       state.openTabPaths = state.openTabPaths.filter((p) => p !== action.payload);
+      state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
+        .filter((path) => path !== action.payload);
     },
     replaceOpenTabPath(
       state,
@@ -91,6 +98,10 @@ const sessionsSlice = createSlice({
     ) {
       const { oldPath, newPath } = action.payload;
       state.openTabPaths = state.openTabPaths.map((p) => (p === oldPath ? newPath : p));
+      state.unreadFinishedSessionPaths = [
+        ...new Set(state.unreadFinishedSessionPaths
+          .map((path) => (path === oldPath ? newPath : path))),
+      ];
     },
     moveOpenTab(
       state,
@@ -139,17 +150,39 @@ const sessionsSlice = createSlice({
     setSessionRunning(state, action: PayloadAction<{ sessionPath: string; running: boolean }>) {
       const { sessionPath, running } = action.payload;
       const set = new Set(state.runningSessionPaths);
-      running ? set.add(sessionPath) : set.delete(sessionPath);
+      if (running) {
+        set.add(sessionPath);
+        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
+          .filter((path) => path !== sessionPath);
+      } else {
+        set.delete(sessionPath);
+      }
       state.runningSessionPaths = [...set];
+    },
+    markSessionFinishedUnread(state, action: PayloadAction<string>) {
+      if (!state.unreadFinishedSessionPaths.includes(action.payload)) {
+        state.unreadFinishedSessionPaths = [...state.unreadFinishedSessionPaths, action.payload];
+      }
+    },
+    clearUnreadFinishedSessions(state) {
+      state.unreadFinishedSessionPaths = [];
     },
     clearRunningPaths(state) {
       state.runningSessionPaths = [];
     },
     setActiveSessionPath(state, action: PayloadAction<string | null>) {
       state.activeSessionPath = action.payload;
+      if (action.payload) {
+        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
+          .filter((path) => path !== action.payload);
+      }
     },
     setActiveSession(state, action: PayloadAction<SessionSummary | null>) {
       state.activeSessionPath = action.payload?.path ?? null;
+      if (action.payload?.path) {
+        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
+          .filter((path) => path !== action.payload?.path);
+      }
     },
     clearActiveSession(state) {
       state.activeSessionPath = null;
@@ -332,11 +365,22 @@ const transcriptSlice = createSlice({
     },
     ensureAssistantMessage(
       state,
-      action: PayloadAction<{ sessionPath: string; messageId: string; requestId?: string }>,
+      action: PayloadAction<{
+        sessionPath: string;
+        messageId: string;
+        requestId?: string;
+        modelId?: string;
+        thinkingLevel?: ChatMessage['thinkingLevel'];
+      }>,
     ) {
-      const { sessionPath, messageId, requestId } = action.payload;
+      const { sessionPath, messageId, requestId, modelId, thinkingLevel } = action.payload;
       const list = (state.bySession[sessionPath] ??= []);
-      if (list.find((m) => m.id === messageId)) return; // already exists
+      const existing = list.find((m) => m.id === messageId);
+      if (existing) {
+        if (modelId) existing.modelId = modelId;
+        if (thinkingLevel) existing.thinkingLevel = thinkingLevel;
+        return; // already exists
+      }
 
       if (requestId) {
         const currentTurn = state.currentTurnBySession[sessionPath];
@@ -348,6 +392,8 @@ const transcriptSlice = createSlice({
           if (canonical) {
             if (canonical.markdown) canonical.markdown += '\n\n';
             if (canonical.thinking) canonical.thinking += '\n\n';
+            if (modelId) canonical.modelId = modelId;
+            if (thinkingLevel) canonical.thinkingLevel = thinkingLevel;
           }
           return;
         }
@@ -359,6 +405,8 @@ const transcriptSlice = createSlice({
         role: 'assistant',
         createdAt: new Date().toISOString(),
         markdown: '',
+        modelId,
+        thinkingLevel,
         parts: [],
         status: 'streaming',
         toolCalls: [],
@@ -414,6 +462,12 @@ const transcriptSlice = createSlice({
         const canonical = list.find((m) => m.id === canonicalId);
         if (canonical) {
           canonical.status = normalizedMessage.status;
+          if (normalizedMessage.modelId) {
+            canonical.modelId = normalizedMessage.modelId;
+          }
+          if (normalizedMessage.thinkingLevel) {
+            canonical.thinkingLevel = normalizedMessage.thinkingLevel;
+          }
           if (normalizedMessage.durationMs !== undefined) {
             canonical.durationMs = (canonical.durationMs ?? 0) + normalizedMessage.durationMs;
           }
@@ -621,6 +675,7 @@ export const selectViewState = createSelector(
     (s: RootState) => s.sessions.sessions,
     (s: RootState) => s.sessions.openTabPaths,
     (s: RootState) => s.sessions.runningSessionPaths,
+    (s: RootState) => s.sessions.unreadFinishedSessionPaths,
     selectActiveSessionPath,
     selectActiveSession,
     (s: RootState) => s.sessions.workspaceCwd,
@@ -637,6 +692,7 @@ export const selectViewState = createSelector(
     sessions,
     openTabPaths,
     runningSessionPaths,
+    unreadFinishedSessionPaths,
     activeSessionPath,
     activeSession,
     workspaceCwd,
@@ -654,6 +710,7 @@ export const selectViewState = createSelector(
       sessions,
       openTabPaths,
       runningSessionPaths,
+      unreadFinishedSessionPaths,
       activeSession,
       transcript,
       busy,

@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { configureStore } from '@reduxjs/toolkit';
-
 // Import the slices and selector directly so tests run without side-effects
 // from the singleton store module.
 import {
@@ -14,17 +12,8 @@ import {
 } from '../src/host/store';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Fixtures
 // ---------------------------------------------------------------------------
-
-function makeStore() {
-  // Re-use the same reducers from the production store but create a fresh
-  // instance for each test so tests are isolated.
-  // We import the reducers via the actions (slices export both).
-  const { store } = require('../src/host/store') as typeof import('../src/host/store');
-  // Return a reference to the singleton for now — tests call dispatch directly.
-  return store;
-}
 
 const session1 = {
   path: '/ws/a',
@@ -80,6 +69,25 @@ test('sessionsActions.clearRunningPaths empties the running list', () => {
   assert.deepEqual(store.getState().sessions.runningSessionPaths, []);
 });
 
+test('sessionsActions mark background completions unread until the tab is opened', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+  store.dispatch(sessionsActions.setOpenTabPaths(['/ws/a', '/ws/b']));
+  store.dispatch(sessionsActions.markSessionFinishedUnread('/ws/b'));
+  assert.deepEqual(store.getState().sessions.unreadFinishedSessionPaths, ['/ws/b']);
+
+  store.dispatch(sessionsActions.setActiveSessionPath('/ws/b'));
+  assert.deepEqual(store.getState().sessions.unreadFinishedSessionPaths, []);
+});
+
+test('sessionsActions clear unread completion state when a session starts running again', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+  store.dispatch(sessionsActions.markSessionFinishedUnread('/ws/a'));
+  store.dispatch(sessionsActions.setSessionRunning({ sessionPath: '/ws/a', running: true }));
+  assert.deepEqual(store.getState().sessions.unreadFinishedSessionPaths, []);
+});
+
 test('sessionsActions.removeOpenTab removes the path', () => {
   const { store } = require('../src/host/store') as typeof import('../src/host/store');
   store.dispatch(sessionsActions.setOpenTabPaths(['/ws/a', '/ws/b', '/ws/c']));
@@ -122,15 +130,22 @@ test('sessionsActions.moveOpenTab reorders openTabPaths without changing the act
 // Transcript slice tests
 // ---------------------------------------------------------------------------
 
-test('transcriptActions.ensureAssistantMessage adds a streaming message', () => {
+test('transcriptActions.ensureAssistantMessage adds a streaming message with reply metadata', () => {
   const { store } = require('../src/host/store') as typeof import('../src/host/store');
   store.dispatch(transcriptActions.clearTranscript('/ws/a'));
   store.dispatch(sessionsActions.setActiveSession(session1));
-  store.dispatch(transcriptActions.ensureAssistantMessage({ sessionPath: '/ws/a', messageId: 'msg-1' }));
+  store.dispatch(transcriptActions.ensureAssistantMessage({
+    sessionPath: '/ws/a',
+    messageId: 'msg-1',
+    modelId: 'gpt-5.4',
+    thinkingLevel: 'high',
+  }));
   const msg = store.getState().transcript.bySession['/ws/a'].find((m) => m.id === 'msg-1');
   assert.ok(msg);
   assert.equal(msg?.status, 'streaming');
   assert.equal(msg?.role, 'assistant');
+  assert.equal(msg?.modelId, 'gpt-5.4');
+  assert.equal(msg?.thinkingLevel, 'high');
 });
 
 test('transcriptActions.ensureAssistantMessage is idempotent', () => {
@@ -307,6 +322,13 @@ test('selectViewState derives busy from activeSession and runningSessionPaths', 
 
   store.dispatch(sessionsActions.setSessionRunning({ sessionPath: session1.path, running: false }));
   assert.equal(selectViewState(store.getState()).busy, false);
+});
+
+test('selectViewState exposes unread finished tabs for the tab strip', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+  store.dispatch(sessionsActions.markSessionFinishedUnread('/ws/b'));
+  assert.deepEqual(selectViewState(store.getState()).unreadFinishedSessionPaths, ['/ws/b']);
 });
 
 test('selectViewState.busy is false when activeSession is null', () => {
@@ -555,26 +577,34 @@ test('multi-turn: upsertMessage on alias merges metadata only', () => {
   store.dispatch(transcriptActions.clearTranscript('/ws/a'));
 
   store.dispatch(transcriptActions.ensureAssistantMessage({
-    sessionPath: '/ws/a', messageId: 'req1:1', requestId: 'req1',
+    sessionPath: '/ws/a', messageId: 'req1:1', requestId: 'req1', modelId: 'gpt-5.4', thinkingLevel: 'high',
   }));
   store.dispatch(transcriptActions.appendDelta({ sessionPath: '/ws/a', messageId: 'req1:1', delta: 'Turn1' }));
   store.dispatch(transcriptActions.upsertMessage({
     sessionPath: '/ws/a',
-    message: { id: 'req1:1', role: 'assistant', createdAt: '', markdown: 'Turn1', status: 'completed', durationMs: 1000 },
+    message: {
+      id: 'req1:1', role: 'assistant', createdAt: '', markdown: 'Turn1', status: 'completed', durationMs: 1000,
+      modelId: 'gpt-5.4', thinkingLevel: 'high',
+    },
   }));
 
   store.dispatch(transcriptActions.ensureAssistantMessage({
-    sessionPath: '/ws/a', messageId: 'req1:2', requestId: 'req1',
+    sessionPath: '/ws/a', messageId: 'req1:2', requestId: 'req1', modelId: 'gpt-5.4', thinkingLevel: 'high',
   }));
   store.dispatch(transcriptActions.appendDelta({ sessionPath: '/ws/a', messageId: 'req1:2', delta: 'Turn2' }));
   store.dispatch(transcriptActions.upsertMessage({
     sessionPath: '/ws/a',
-    message: { id: 'req1:2', role: 'assistant', createdAt: '', markdown: 'Turn2', status: 'completed', durationMs: 2000 },
+    message: {
+      id: 'req1:2', role: 'assistant', createdAt: '', markdown: 'Turn2', status: 'completed', durationMs: 2000,
+      modelId: 'gpt-5.4', thinkingLevel: 'high',
+    },
   }));
 
   const msg = store.getState().transcript.bySession['/ws/a'].find((m) => m.id === 'req1:1');
   assert.equal(msg?.status, 'completed');
   assert.equal(msg?.durationMs, 3000); // accumulated
+  assert.equal(msg?.modelId, 'gpt-5.4');
+  assert.equal(msg?.thinkingLevel, 'high');
   // markdown was accumulated via deltas with separator, not replaced by turn2-only text
   assert.ok(msg?.markdown.includes('Turn1'));
   assert.ok(msg?.markdown.includes('Turn2'));

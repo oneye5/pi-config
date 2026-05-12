@@ -13,6 +13,7 @@ const baseViewState: ViewState = {
   sessions: [],
   openTabPaths: [],
   runningSessionPaths: [],
+  unreadFinishedSessionPaths: [],
   activeSession: null,
   transcript: [],
   busy: false,

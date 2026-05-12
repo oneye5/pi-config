@@ -45,7 +45,7 @@ export class AttachmentDropView implements vscode.TreeDataProvider<AttachmentDro
     return [this.rootNode];
   }
 
-  getTreeItem(element: AttachmentDropNode): vscode.TreeItem {
+  getTreeItem(_element: AttachmentDropNode): vscode.TreeItem {
     const item = new vscode.TreeItem(
       'Drop Files Here',
       vscode.TreeItemCollapsibleState.None,

@@ -37,7 +37,7 @@ emit('backend.ready', {
   sdkPath: '/mock/sdk',
   agentDir: '/mock/agent',
   sdkVersion: '0.0.0-mock',
-  protocolVersion: 4,
+  protocolVersion: 5,
 });
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -118,7 +118,7 @@ rl.on('line', (line) => {
           id: 'claude-mock',
           name: 'Claude Mock',
           provider: 'mock',
-          reasoning: false,
+          reasoning: true,
           contextWindow: 200000,
           maxTokens: 8192,
         }],
@@ -153,7 +153,13 @@ rl.on('line', (line) => {
 
       // Stream sequence (async to give test time to read)
       setTimeout(() => {
-        emit('message.started', { requestId, messageId, sessionPath });
+        emit('message.started', {
+          requestId,
+          messageId,
+          sessionPath,
+          modelId: 'claude-mock',
+          thinkingLevel: 'medium',
+        });
 
         setTimeout(() => {
           emit('message.delta', { requestId, messageId, sessionPath, delta: 'Hello' });
@@ -192,6 +198,8 @@ rl.on('line', (line) => {
                       role: 'assistant',
                       createdAt: new Date().toISOString(),
                       markdown: 'Hello, world!',
+                      modelId: 'claude-mock',
+                      thinkingLevel: 'medium',
                       status: 'completed',
                       toolCalls: [{
                         id: toolCallId,

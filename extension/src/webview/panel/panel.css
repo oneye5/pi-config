@@ -14,6 +14,7 @@
   --panel-danger-surface: var(--vscode-inputValidation-errorBackground, rgba(255, 50, 50, 0.12));
   --panel-warning: var(--vscode-inputValidation-warningBorder, #d29922);
   --panel-warning-surface: var(--vscode-inputValidation-warningBackground, rgba(255, 170, 0, 0.12));
+  --panel-success: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen, #3fb950));
 }
 
 *,
@@ -157,12 +158,12 @@ body.session-tab-dragging {
   border-bottom: none;
 }
 
-.session-tab.active {
-  background: var(--vscode-sideBar-background, var(--panel-surface));
-  border-color: var(--panel-border);
-  z-index: 1;
+.session-tab.unread-finished {
+  border-color: var(--panel-accent);
+  animation: session-tab-unread-flash 1.35s ease-in-out infinite;
 }
 
+.session-tab.unread-finished::before,
 .session-tab.active::before {
   content: '';
   position: absolute;
@@ -172,6 +173,17 @@ body.session-tab-dragging {
   height: 2px;
   background: var(--panel-accent);
   border-radius: 0 0 2px 2px;
+}
+
+.session-tab.unread-finished .session-tab-label {
+  font-weight: 600;
+}
+
+.session-tab.active {
+  background: var(--vscode-sideBar-background, var(--panel-surface));
+  border-color: var(--panel-border);
+  z-index: 1;
+  animation: none;
 }
 
 .session-tab-main {
@@ -196,13 +208,21 @@ body.session-tab-dragging {
   font-size: 12px;
 }
 
-.session-tab-running {
+.session-tab-running,
+.session-tab-finished {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--panel-accent);
   flex-shrink: 0;
+}
+
+.session-tab-running {
+  background: var(--panel-accent);
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+.session-tab-finished {
+  background: var(--panel-success);
 }
 
 .session-tab-close {
@@ -419,6 +439,8 @@ body.session-tab-dragging {
 .transcript {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
   padding: 8px 12px 10px;
   display: flex;
   flex-direction: column;
@@ -522,10 +544,19 @@ body.session-tab-dragging {
   color: var(--panel-danger);
 }
 
+.assistant-reply-hint {
+  min-width: 0;
+  font-size: 10px;
+  color: var(--panel-muted);
+  opacity: 0.78;
+  overflow-wrap: anywhere;
+}
+
 .message-body {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .message-body > :first-child {
@@ -550,6 +581,11 @@ body.session-tab-dragging {
   font-size: 12px;
   line-height: 1.5;
   margin: 8px 0;
+}
+
+.message-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-body code {
@@ -617,16 +653,6 @@ body.session-tab-dragging {
 
 .message-body a:hover {
   text-decoration: underline;
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  background: currentColor;
-  animation: blink 1s step-end infinite;
 }
 
 .inline-editor {
@@ -900,6 +926,9 @@ body.session-tab-dragging {
   flex-direction: column;
   cursor: default;
   user-select: text;
+  background:
+    linear-gradient(180deg, var(--panel-accent-surface) 0%, transparent 120px),
+    var(--panel-subtle-surface);
 }
 
 .subagent-result + .subagent-result {
@@ -925,7 +954,7 @@ body.session-tab-dragging {
 .subagent-running-tool {
   font-size: 11px;
   color: var(--panel-muted);
-  background: var(--panel-hover);
+  background: var(--panel-hover-surface);
   border-radius: 3px;
   padding: 1px 6px;
 }
@@ -1026,6 +1055,125 @@ body.session-tab-dragging {
 
 .context-window-indicator.critical {
   color: var(--panel-danger);
+}
+
+.toolbar-settings {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-settings-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--panel-subtle-surface);
+  color: var(--panel-muted);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.toolbar-settings-trigger:hover,
+.toolbar-settings-trigger:focus,
+.toolbar-settings-trigger.open {
+  border-color: var(--panel-border);
+  color: var(--vscode-foreground);
+  outline: none;
+}
+
+.toolbar-settings-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+  max-width: 220px;
+  max-height: min(220px, calc(100vh - 160px));
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--vscode-menu-border, var(--panel-border));
+  border-radius: 9px;
+  background: var(--vscode-menu-background, var(--vscode-dropdown-background, var(--panel-surface)));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+}
+
+.toolbar-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolbar-settings-section + .toolbar-settings-section {
+  padding-top: 4px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.toolbar-settings-section-label {
+  padding: 0 6px;
+  font-size: 9px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--panel-muted);
+}
+
+.toolbar-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.toolbar-settings-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.toolbar-settings-item:hover,
+.toolbar-settings-item:focus {
+  background: var(--vscode-menu-selectionBackground, var(--panel-hover-surface));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+  outline: none;
+}
+
+.toolbar-settings-item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--panel-accent);
+}
+
+.toolbar-settings-item.checked .toolbar-settings-item-check {
+  border-color: var(--panel-accent);
+  background: var(--panel-subtle-surface);
+}
+
+.toolbar-settings-item-label {
+  min-width: 0;
 }
 
 .pref-toggle,
@@ -1166,5 +1314,18 @@ body.session-tab-dragging {
 
   50% {
     opacity: 0.35;
+  }
+}
+
+@keyframes session-tab-unread-flash {
+  0%,
+  100% {
+    background: var(--panel-subtle-surface);
+    box-shadow: none;
+  }
+
+  50% {
+    background: var(--panel-accent-surface);
+    box-shadow: 0 0 0 1px var(--panel-accent);
   }
 }

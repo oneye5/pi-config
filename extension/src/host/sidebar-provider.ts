@@ -13,6 +13,7 @@ import {
 } from './sidebar-sync';
 import { renderWebviewHtml, getWebviewRoots } from './webview-assets';
 import type {
+  HostToWebviewMessage,
   PatchOp,
   ViewState,
   WebviewToHostMessage,

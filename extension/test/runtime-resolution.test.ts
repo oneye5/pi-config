@@ -85,9 +85,35 @@ test('resolveSdkPath prefers configured sdk path', async () => {
   assert.equal(sdkPath, '/opt/pi-sdk');
 });
 
-test('resolveSdkPath falls back to npm root -g', async () => {
-  const expectedSdkPath = path.join('/global/node_modules', '@mariozechner', 'pi-coding-agent');
+test('resolveSdkPath prefers a cached valid SDK path before shelling out to npm', async () => {
+  const cachedSdkPath = '/cache/pi-sdk';
+  let execCalls = 0;
+
   const sdkPath = await resolveSdkPath({
+    cachedPath: cachedSdkPath,
+    env: {},
+    exists: (filePath) => {
+      return (
+        filePath === path.join(cachedSdkPath, 'package.json') ||
+        filePath === path.join(cachedSdkPath, 'dist', 'index.js')
+      );
+    },
+    exec: async () => {
+      execCalls += 1;
+      return { stdout: '', stderr: '', exitCode: 0 };
+    },
+  });
+
+  assert.equal(sdkPath, cachedSdkPath);
+  assert.equal(execCalls, 0);
+});
+
+test('resolveSdkPath ignores an invalid cached path and falls back to npm root -g', async () => {
+  const expectedSdkPath = path.join('/global/node_modules', '@mariozechner', 'pi-coding-agent');
+  let execCalls = 0;
+
+  const sdkPath = await resolveSdkPath({
+    cachedPath: '/cache/stale-sdk',
     env: {},
     exists: (filePath) => {
       return (
@@ -95,23 +121,23 @@ test('resolveSdkPath falls back to npm root -g', async () => {
         filePath === path.join(expectedSdkPath, 'dist', 'index.js')
       );
     },
-    exec: async () => ({
-      stdout: '/global/node_modules\n',
-      stderr: '',
-      exitCode: 0,
-    }),
+    exec: async () => {
+      execCalls += 1;
+      return {
+        stdout: '/global/node_modules\n',
+        stderr: '',
+        exitCode: 0,
+      };
+    },
   });
 
   assert.equal(sdkPath, expectedSdkPath);
+  assert.equal(execCalls, 1);
 });
 
 // ─── execCommand / createCommandExecutor ────────────────────────────────────
 
 test('createCommandExecutor wraps npm through cmd.exe on Windows', async () => {
-  // Capture what command gets invoked by patching execFile.
-  const invocations: { command: string; args: string[] }[] = [];
-  const { execFile } = await import('node:child_process');
-
   // We call the real resolveCommandInvocation to verify integration.
   const win32Invocation = resolveCommandInvocation('npm', ['root', '-g'], { platform: 'win32' });
   assert.equal(win32Invocation.command.toLowerCase().endsWith('cmd.exe') || win32Invocation.command === 'cmd.exe', true, 'Windows npm should route through cmd.exe');

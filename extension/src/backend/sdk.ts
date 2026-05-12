@@ -1,7 +1,6 @@
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { ChatMessage, ToolCall } from '../shared/protocol';
 import type { SessionEntryLike } from './transcript';
 
 // ─── Minimal SDK contract ────────────────────────────────────────────────────
@@ -44,6 +43,7 @@ export interface SdkSessionManager {
 
 export interface SdkSession {
   model?: { id: string; contextWindow?: number; maxTokens?: number };
+  thinkingLevel?: string;
   sessionFile?: string;
   sessionName?: string;
   isStreaming: boolean;

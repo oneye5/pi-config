@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 
 import {
   sessionsActions,
-  settingsActions,
   transcriptActions,
   uiActions,
   selectViewState,
@@ -153,12 +152,17 @@ test('replaceSessionSummaries updates name when incoming is not a placeholder', 
 test('uiActions.setPrefs merges into existing prefs', () => {
   const store = useStore();
 
-  store.dispatch(uiActions.setPrefs({ autoExpandReasoning: false, autoExpandToolCalls: false }));
-  store.dispatch(uiActions.setPrefs({ autoExpandReasoning: true }));
+  store.dispatch(uiActions.setPrefs({
+    autoExpandReasoning: false,
+    autoExpandToolCalls: false,
+    suppressCompletionNotifications: false,
+  }));
+  store.dispatch(uiActions.setPrefs({ autoExpandReasoning: true, suppressCompletionNotifications: true }));
 
   const { prefs } = store.getState().ui;
   assert.equal(prefs.autoExpandReasoning, true);
   assert.equal(prefs.autoExpandToolCalls, false, 'unchanged pref should not be modified');
+  assert.equal(prefs.suppressCompletionNotifications, true);
 });
 
 // ─── selectViewState prefs round-trip ──────────────────────────────────────────
@@ -166,11 +170,16 @@ test('uiActions.setPrefs merges into existing prefs', () => {
 test('selectViewState includes prefs from ui slice', () => {
   const store = useStore();
 
-  store.dispatch(uiActions.setPrefs({ autoExpandReasoning: true, autoExpandToolCalls: true }));
+  store.dispatch(uiActions.setPrefs({
+    autoExpandReasoning: true,
+    autoExpandToolCalls: true,
+    suppressCompletionNotifications: true,
+  }));
 
   const viewState = selectViewState(store.getState());
   assert.equal(viewState.prefs.autoExpandReasoning, true);
   assert.equal(viewState.prefs.autoExpandToolCalls, true);
+  assert.equal(viewState.prefs.suppressCompletionNotifications, true);
 });
 
 // ─── Overlay / gap-detection logic ──────────────────────────────────────────

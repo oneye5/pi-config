@@ -1,37 +1,26 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource preact */
 
-import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'preact/hooks';
 
 import type { ChatMessage, ChatMessagePart, ChatPrefs, SystemPromptEntry, ToolCall } from '../../shared/protocol';
 import type { Overlay } from './overlay';
+import {
+  advanceSmoothScrollTop,
+  captureScrollAnchor,
+  isNearBottom,
+  resolveAutoFollowState,
+  resolveScrollAnchorDelta,
+  type ScrollAnchorCandidate,
+  type ScrollAnchorSnapshot,
+} from './auto-scroll';
+import { syncDisclosureOpenState } from './disclosure-state';
 import { renderMarkdown, reasoningSummary } from './markdown';
 import { SystemPromptMessage } from './system-prompts';
+import { assistantReplyMeta, formatDuration, formatTimestamp, roleLabel } from './transcript-header';
 import { getToolCallPresentation, summarizeToolCall } from './tool-call-summary';
 
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-});
-
-function formatTimestamp(value: string): string | null {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return timeFormatter.format(date);
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-}
-
-function roleLabel(role: ChatMessage['role']): string {
-  if (role === 'user') return 'You';
-  if (role === 'assistant') return 'PI';
-  return 'System';
-}
+const MANUAL_SCROLL_INTENT_GRACE_MS = 280;
 
 function cloneToolCall(toolCall: ToolCall): ToolCall {
   return { ...toolCall };
@@ -160,6 +149,53 @@ function assistantPartsFromMessage(message: ChatMessage): ChatMessagePart[] | un
   return message.parts && message.parts.length > 0 ? message.parts : legacyAssistantParts(message);
 }
 
+function useDisclosureOpen(defaultOpen: boolean) {
+  const [open, setOpen] = useState(defaultOpen);
+  const previousDefaultOpenRef = useRef(defaultOpen);
+
+  useEffect(() => {
+    const previousDefaultOpen = previousDefaultOpenRef.current;
+    previousDefaultOpenRef.current = defaultOpen;
+    setOpen((currentOpen) => syncDisclosureOpenState(currentOpen, previousDefaultOpen, defaultOpen));
+  }, [defaultOpen]);
+
+  return [open, setOpen] as const;
+}
+
+function getScrollAnchorCandidates(container: HTMLDivElement): ScrollAnchorCandidate[] {
+  return Array.from(container.children)
+    .map((child, index) => {
+      if (!(child instanceof HTMLElement)) {
+        return null;
+      }
+
+      const key = child.dataset.messageId ?? child.dataset.scrollAnchorId ?? `scroll-anchor-${index}`;
+      const rect = child.getBoundingClientRect();
+      return {
+        key,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    })
+    .filter((candidate): candidate is ScrollAnchorCandidate => candidate !== null);
+}
+
+function captureDomScrollAnchor(container: HTMLDivElement): ScrollAnchorSnapshot | null {
+  const containerTop = container.getBoundingClientRect().top;
+  return captureScrollAnchor(getScrollAnchorCandidates(container), containerTop);
+}
+
+function restoreDomScrollAnchor(container: HTMLDivElement, anchor: ScrollAnchorSnapshot | null): boolean {
+  const containerTop = container.getBoundingClientRect().top;
+  const delta = resolveScrollAnchorDelta(anchor, getScrollAnchorCandidates(container), containerTop);
+  if (delta === null || Math.abs(delta) < 1) {
+    return false;
+  }
+
+  container.scrollTop += delta;
+  return true;
+}
+
 // ─── ReasoningBlock ──────────────────────────────────────────────────────────
 
 interface ReasoningBlockProps {
@@ -169,11 +205,7 @@ interface ReasoningBlockProps {
 }
 
 export function ReasoningBlock({ text, autoExpand, onContextMenu }: ReasoningBlockProps) {
-  const [open, setOpen] = useState(autoExpand);
-
-  useEffect(() => {
-    setOpen(autoExpand);
-  }, [autoExpand]);
+  const [open, setOpen] = useDisclosureOpen(autoExpand);
 
   const html = open ? renderMarkdown(text) : '';
 
@@ -262,13 +294,9 @@ function ToolCallHeader({ open, name, status, summary, summaryPath, onOpenFile }
 }
 
 export function ToolCallCard({ toolCall, autoExpand, workingDirectory, onOpenFile, onContextMenu }: ToolCallCardProps) {
-  const [open, setOpen] = useState(autoExpand || toolCall.status === 'running');
+  const [open, setOpen] = useDisclosureOpen(autoExpand);
   const presentation = getToolCallPresentation(toolCall, { workingDirectory });
   const variantClass = presentation.variant ? ` tool-call-variant-${presentation.variant}` : '';
-
-  useEffect(() => {
-    setOpen(autoExpand || toolCall.status === 'running');
-  }, [autoExpand, toolCall.status]);
 
   return (
     <div
@@ -444,14 +472,18 @@ interface SubagentBlockProps {
   workingDirectory: string | null;
   onOpenFile: (path: string) => void;
   onContextMenu: (e: MouseEvent) => void;
+  onNestedContextMenu: (type: 'reasoning' | 'toolCalls' | 'message', rawData: string, e: MouseEvent) => void;
 }
 
-function SubagentBlock({ toolCall, prefs, workingDirectory, onOpenFile, onContextMenu }: SubagentBlockProps) {
-  const [open, setOpen] = useState(prefs.autoExpandToolCalls || toolCall.status === 'running');
-
-  useEffect(() => {
-    setOpen(prefs.autoExpandToolCalls || toolCall.status === 'running');
-  }, [prefs.autoExpandToolCalls, toolCall.status]);
+function SubagentBlock({
+  toolCall,
+  prefs,
+  workingDirectory,
+  onOpenFile,
+  onContextMenu,
+  onNestedContextMenu,
+}: SubagentBlockProps) {
+  const [open, setOpen] = useDisclosureOpen(prefs.autoExpandToolCalls);
 
   // The SDK wraps the tool result in AgentToolResult<SubagentDetails> = { content, details }.
   // Normalise both the nested shape and any legacy flat shape.
@@ -478,6 +510,7 @@ function SubagentBlock({ toolCall, prefs, workingDirectory, onOpenFile, onContex
   const nameDisplay = agentNames.length === 1 ? agentNames[0] : `${agentNames.length} agents`;
   const multipleResults = result.results.length > 1;
   const summary = summarizeToolCall(toolCall);
+  const nestedDisclosureDefaultsKey = `${prefs.autoExpandReasoning ? 'r1' : 'r0'}-${prefs.autoExpandToolCalls ? 't1' : 't0'}`;
 
   return (
     <div
@@ -497,7 +530,12 @@ function SubagentBlock({ toolCall, prefs, workingDirectory, onOpenFile, onContex
         onOpenFile={onOpenFile}
       />
       {open && (
-        <div class="subagent-messages" onClick={(e) => e.stopPropagation()}>
+        <div
+          class="subagent-messages"
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
           {result.results.map((r, i) => {
             const msgs = rawMessagesToChatMessages(r.messages, `${toolCall.id}-${i}`);
             return (
@@ -514,7 +552,7 @@ function SubagentBlock({ toolCall, prefs, workingDirectory, onOpenFile, onContex
                 )}
                 {msgs.map((msg) => (
                   <MessageItem
-                    key={msg.id}
+                    key={`${msg.id}-${nestedDisclosureDefaultsKey}`}
                     message={msg}
                     overlayParts={undefined}
                     isStreaming={false}
@@ -526,7 +564,7 @@ function SubagentBlock({ toolCall, prefs, workingDirectory, onOpenFile, onContex
                     onEditConfirm={() => {}}
                     onEditCancel={() => {}}
                     onOpenFile={onOpenFile}
-                    onContextMenu={() => {}}
+                    onContextMenu={onNestedContextMenu}
                   />
                 ))}
               </div>
@@ -546,9 +584,10 @@ interface ToolCallItemProps {
   workingDirectory: string | null;
   onOpenFile: (path: string) => void;
   onContextMenu: (e: MouseEvent) => void;
+  onNestedContextMenu: (type: 'reasoning' | 'toolCalls' | 'message', rawData: string, e: MouseEvent) => void;
 }
 
-function ToolCallItem({ toolCall, prefs, workingDirectory, onOpenFile, onContextMenu }: ToolCallItemProps) {
+function ToolCallItem({ toolCall, prefs, workingDirectory, onOpenFile, onContextMenu, onNestedContextMenu }: ToolCallItemProps) {
   if (toolCall.name === 'subagent') {
     return (
       <SubagentBlock
@@ -557,6 +596,7 @@ function ToolCallItem({ toolCall, prefs, workingDirectory, onOpenFile, onContext
         workingDirectory={workingDirectory}
         onOpenFile={onOpenFile}
         onContextMenu={onContextMenu}
+        onNestedContextMenu={onNestedContextMenu}
       />
     );
   }
@@ -696,6 +736,7 @@ export function MessageItem({
     : message.status === 'interrupted' ? 'interrupted'
     : message.status === 'error' ? 'error'
     : '';
+  const replyMeta = assistantReplyMeta(message);
 
   const html = renderMarkdown(combinedMarkdown);
   const messageRaw = JSON.stringify({
@@ -703,6 +744,8 @@ export function MessageItem({
     createdAt: message.createdAt,
     status: message.status,
     markdown: combinedMarkdown,
+    ...(message.modelId ? { modelId: message.modelId } : {}),
+    ...(message.thinkingLevel ? { thinkingLevel: message.thinkingLevel } : {}),
     ...(combinedThinking ? { thinking: combinedThinking } : {}),
     ...(combinedToolCalls?.length ? { toolCalls: combinedToolCalls } : {}),
     ...(combinedParts?.length ? { parts: combinedParts } : {}),
@@ -726,6 +769,7 @@ export function MessageItem({
           {message.role === 'assistant' && !isCurrentlyStreaming && message.durationMs !== undefined && (
             <span class="message-duration">{formatDuration(message.durationMs)}</span>
           )}
+          {replyMeta && <span class="assistant-reply-hint">{replyMeta.compactText}</span>}
         </div>
         <div class="message-head-actions">
           {statusLabel && <span class={`message-status ${statusTone}`}>{statusLabel}</span>}
@@ -762,6 +806,7 @@ export function MessageItem({
                       workingDirectory={workingDirectory}
                       onOpenFile={onOpenFile}
                       onContextMenu={(e) => onContextMenu('toolCalls', JSON.stringify(part.toolCall, null, 2), e)}
+                      onNestedContextMenu={onContextMenu}
                     />
                   </div>
                 );
@@ -791,7 +836,6 @@ export function MessageItem({
             />
           )}
 
-          {isCurrentlyStreaming && <span class="streaming-cursor" aria-hidden="true" />}
         </>
       )}
     </div>
@@ -801,6 +845,7 @@ export function MessageItem({
 // ─── TranscriptView ──────────────────────────────────────────────────────────
 
 interface TranscriptViewProps {
+  sessionKey: string | null;
   transcript: ChatMessage[];
   busy: boolean;
   overlay: Overlay;
@@ -816,6 +861,7 @@ interface TranscriptViewProps {
 }
 
 export function TranscriptView({
+  sessionKey,
   transcript,
   busy,
   overlay,
@@ -829,26 +875,194 @@ export function TranscriptView({
   onOpenFile,
   onContextMenu,
 }: TranscriptViewProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const userScrolledUp = useRef(false);
+  const autoFollowRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const manualScrollIntentUntilRef = useRef(0);
+  const pointerScrollIntentRef = useRef(false);
+  const hasPositionedForSessionRef = useRef(false);
+  const scrollAnchorRef = useRef<ScrollAnchorSnapshot | null>(null);
+  const followAnimationFrameRef = useRef<number | null>(null);
+  const targetScrollTopRef = useRef<number | null>(null);
+  const previousSessionKeyRef = useRef<string | null | undefined>(undefined);
+  const hasScrollableTranscript = transcript.length > 0 || systemPrompts.length > 0;
+
+  if (previousSessionKeyRef.current !== sessionKey) {
+    previousSessionKeyRef.current = sessionKey;
+    autoFollowRef.current = true;
+    lastScrollTopRef.current = 0;
+    manualScrollIntentUntilRef.current = 0;
+    pointerScrollIntentRef.current = false;
+    hasPositionedForSessionRef.current = false;
+    scrollAnchorRef.current = null;
+    targetScrollTopRef.current = null;
+    if (followAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(followAnimationFrameRef.current);
+      followAnimationFrameRef.current = null;
+    }
+  }
+
+  const stopFollowAnimation = useCallback(() => {
+    targetScrollTopRef.current = null;
+    if (followAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(followAnimationFrameRef.current);
+      followAnimationFrameRef.current = null;
+    }
+  }, []);
+
+  const runFollowAnimation = useCallback(() => {
+    followAnimationFrameRef.current = null;
+
+    const el = scrollRef.current;
+    const targetScrollTop = targetScrollTopRef.current;
+    if (!el || targetScrollTop === null || !autoFollowRef.current) {
+      return;
+    }
+
+    const nextScrollTop = advanceSmoothScrollTop(el.scrollTop, targetScrollTop);
+    if (Math.abs(nextScrollTop - el.scrollTop) >= 0.5) {
+      el.scrollTop = nextScrollTop;
+      lastScrollTopRef.current = el.scrollTop;
+    }
+
+    if (Math.abs(targetScrollTop - el.scrollTop) <= 1) {
+      targetScrollTopRef.current = null;
+      return;
+    }
+
+    followAnimationFrameRef.current = window.requestAnimationFrame(runFollowAnimation);
+  }, []);
+
+  const ensureFollowAnimation = useCallback(() => {
+    if (followAnimationFrameRef.current === null) {
+      followAnimationFrameRef.current = window.requestAnimationFrame(runFollowAnimation);
+    }
+  }, [runFollowAnimation]);
+
+  useEffect(() => () => {
+    stopFollowAnimation();
+  }, [stopFollowAnimation]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const handleScroll = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      userScrolledUp.current = !atBottom;
-    };
-    el.addEventListener('scroll', handleScroll, { passive: true });
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, []);
 
-  useEffect(() => {
-    if (!userScrolledUp.current) {
-      bottomRef.current?.scrollIntoView({ block: 'end', behavior: busy ? 'auto' : 'smooth' });
+    const markManualScrollIntent = () => {
+      manualScrollIntentUntilRef.current = Date.now() + MANUAL_SCROLL_INTENT_GRACE_MS;
+    };
+
+    const clearPointerScrollIntent = () => {
+      pointerScrollIntentRef.current = false;
+    };
+
+    autoFollowRef.current = isNearBottom({
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+      clientHeight: el.clientHeight,
+    });
+    lastScrollTopRef.current = el.scrollTop;
+    scrollAnchorRef.current = autoFollowRef.current ? null : captureDomScrollAnchor(el);
+
+    const handleWheel = () => {
+      markManualScrollIntent();
+    };
+
+    const handleTouchStart = () => {
+      markManualScrollIntent();
+    };
+
+    const handleTouchMove = () => {
+      markManualScrollIntent();
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target !== el) {
+        return;
+      }
+      pointerScrollIntentRef.current = true;
+      markManualScrollIntent();
+    };
+
+    const handleScroll = () => {
+      const nextScrollTop = el.scrollTop;
+      const hasManualScrollIntent = pointerScrollIntentRef.current
+        || Date.now() <= manualScrollIntentUntilRef.current;
+      const nextAutoFollow = resolveAutoFollowState({
+        previousAutoFollow: autoFollowRef.current,
+        previousScrollTop: lastScrollTopRef.current,
+        nextScrollTop,
+        metrics: {
+          scrollHeight: el.scrollHeight,
+          scrollTop: nextScrollTop,
+          clientHeight: el.clientHeight,
+        },
+        hasManualScrollIntent,
+      });
+      autoFollowRef.current = nextAutoFollow;
+      lastScrollTopRef.current = nextScrollTop;
+      if (!nextAutoFollow) {
+        stopFollowAnimation();
+      }
+      scrollAnchorRef.current = nextAutoFollow ? null : captureDomScrollAnchor(el);
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: true });
+    el.addEventListener('touchstart', handleTouchStart, { passive: true });
+    el.addEventListener('touchmove', handleTouchMove, { passive: true });
+    el.addEventListener('pointerdown', handlePointerDown, { passive: true });
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('pointerup', clearPointerScrollIntent, { passive: true });
+    window.addEventListener('pointercancel', clearPointerScrollIntent, { passive: true });
+    window.addEventListener('blur', clearPointerScrollIntent);
+
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('pointerdown', handlePointerDown);
+      el.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('pointerup', clearPointerScrollIntent);
+      window.removeEventListener('pointercancel', clearPointerScrollIntent);
+      window.removeEventListener('blur', clearPointerScrollIntent);
+      clearPointerScrollIntent();
+    };
+  }, [sessionKey, hasScrollableTranscript, stopFollowAnimation]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    if (!hasPositionedForSessionRef.current) {
+      hasPositionedForSessionRef.current = true;
+      if (autoFollowRef.current) {
+        stopFollowAnimation();
+        el.scrollTop = el.scrollHeight;
+        lastScrollTopRef.current = el.scrollTop;
+      } else {
+        scrollAnchorRef.current = captureDomScrollAnchor(el);
+      }
+      return;
     }
-  }, [transcript.length, busy, overlay]);
+
+    if (!autoFollowRef.current) {
+      stopFollowAnimation();
+      restoreDomScrollAnchor(el, scrollAnchorRef.current);
+      lastScrollTopRef.current = el.scrollTop;
+      scrollAnchorRef.current = captureDomScrollAnchor(el);
+      return;
+    }
+
+    const targetScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (Math.abs(targetScrollTop - el.scrollTop) < 1) {
+      stopFollowAnimation();
+      scrollAnchorRef.current = null;
+      return;
+    }
+
+    targetScrollTopRef.current = targetScrollTop;
+    ensureFollowAnimation();
+    scrollAnchorRef.current = null;
+  }, [sessionKey, transcript.length, busy, overlay, systemPrompts.length, ensureFollowAnimation, stopFollowAnimation]);
 
   if (transcript.length === 0 && systemPrompts.length === 0) {
     return (
@@ -886,7 +1100,6 @@ export function TranscriptView({
           />
         );
       })}
-      <div ref={bottomRef} />
     </div>
   );
 }

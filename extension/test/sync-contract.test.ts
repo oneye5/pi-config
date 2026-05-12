@@ -24,6 +24,7 @@ test('PROTOCOL_VERSION is a positive integer', () => {
 test('DEFAULT_CHAT_PREFS shape', () => {
   assert.equal(typeof DEFAULT_CHAT_PREFS.autoExpandReasoning, 'boolean');
   assert.equal(typeof DEFAULT_CHAT_PREFS.autoExpandToolCalls, 'boolean');
+  assert.equal(typeof DEFAULT_CHAT_PREFS.suppressCompletionNotifications, 'boolean');
 });
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ test('HostToWebviewMessage state envelope carries hostInstanceId and revision', 
       sessions: [],
       openTabPaths: [],
       runningSessionPaths: [],
+      unreadFinishedSessionPaths: [],
       activeSession: null,
       transcript: [],
       busy: false,
@@ -140,11 +142,12 @@ test('ContextUsageChangedPayload carries nullable live usage per session', () =>
 test('WebviewToHostMessage.setPrefs accepts partial pref updates', () => {
   const msg: WebviewToHostMessage = {
     type: 'setPrefs',
-    prefs: { autoExpandReasoning: true },
+    prefs: { autoExpandReasoning: true, suppressCompletionNotifications: true },
   };
   assert.equal(msg.type, 'setPrefs');
   if (msg.type === 'setPrefs') {
     assert.equal(msg.prefs.autoExpandReasoning, true);
+    assert.equal(msg.prefs.suppressCompletionNotifications, true);
   }
 });
 

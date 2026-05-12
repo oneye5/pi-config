@@ -20,6 +20,7 @@ export interface ResolveNodePathOptions extends CommonOptions {
 
 export interface ResolveSdkPathOptions extends CommonOptions {
   configuredPath?: string;
+  cachedPath?: string;
   exec: CommandExecutor;
 }
 
@@ -135,6 +136,10 @@ export async function resolveSdkPath(options: ResolveSdkPathOptions): Promise<st
       throw new Error(`PI_SDK_PATH is not a valid SDK install: ${envPath}`);
     }
     return envPath;
+  }
+
+  if (options.cachedPath && isValidSdkPath(options.cachedPath, exists)) {
+    return options.cachedPath;
   }
 
   const npmRoot = await options.exec('npm', ['root', '-g']);

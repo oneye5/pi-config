@@ -35,7 +35,6 @@ import {
   validateSessionCreate,
   validateSessionOpen,
   validateSessionPath,
-  validateSessionPathOptional,
   validateSettingsSet,
   validateTruncateAfter,
 } from './rpc';
@@ -43,7 +42,6 @@ import {
   loadSdk,
   loadSdkInternalModule,
   type SdkBuildSystemPromptOptions,
-  type SdkContextFile,
   type SdkModule,
   type SdkRuntime,
   type SdkSession,
@@ -57,6 +55,8 @@ import { mapAssistantMessage, mapTranscript, summarizeSession, type SessionEntry
 interface ActiveRequest {
   id: string;
   messageIndex: number;
+  modelId?: string;
+  thinkingLevel?: ThinkingLevel;
   currentMessageId?: string;
   lastAssistantMessageId?: string;
   currentMessageStartedAt?: number;
@@ -110,6 +110,20 @@ function summarizePrompt(text: string): string {
 function normalizePromptText(text: string | undefined): string | undefined {
   const trimmed = text?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+  switch (value) {
+    case 'off':
+    case 'minimal':
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function toDisplayPath(filePath: string): string {
@@ -666,6 +680,16 @@ export class BackendServer {
         return openPayload;
       }
 
+      case 'session.preload': {
+        const params = validateSessionPath('session.preload', request.params);
+        const context = await this.ensureSessionContext(params.sessionPath);
+        const preloadPayload = await this.buildSessionOpenedPayload(context.sessionPath);
+        this.emit('session.opened', preloadPayload);
+        this.emitBusyChanged(context, context.session.isStreaming);
+        void this.emitSessionListChanged();
+        return preloadPayload;
+      }
+
       case 'session.truncateAfter': {
         const params = validateTruncateAfter(request.params);
 
@@ -715,6 +739,8 @@ export class BackendServer {
         context.activeRequest = {
           id: requestId,
           messageIndex: 0,
+          modelId: context.session.model?.id,
+          thinkingLevel: normalizeThinkingLevel(context.session.thinkingLevel),
           aborted: false,
         };
 
@@ -822,6 +848,8 @@ export class BackendServer {
           requestId: context.activeRequest.id,
           messageId: context.activeRequest.currentMessageId,
           sessionPath: context.sessionPath,
+          modelId: context.activeRequest.modelId,
+          thinkingLevel: context.activeRequest.thinkingLevel,
         } satisfies MessageStartedPayload);
         this.emitContextUsageChanged(context);
         return;
@@ -924,7 +952,10 @@ export class BackendServer {
           ? Date.now() - context.activeRequest.currentMessageStartedAt
           : undefined;
         context.activeRequest.currentMessageStartedAt = undefined;
-        const message = mapAssistantMessage(messageId, event.message as any, durationMs);
+        const message = mapAssistantMessage(messageId, event.message as any, durationMs, {
+          modelId: context.activeRequest.modelId,
+          thinkingLevel: context.activeRequest.thinkingLevel,
+        });
         this.emit('message.finished', {
           requestId: context.activeRequest.id,
           sessionPath: context.sessionPath,

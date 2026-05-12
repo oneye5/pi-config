@@ -71,6 +71,50 @@ test('mapTranscript preserves assistant part ordering from session entries', () 
   );
 });
 
+test('mapTranscript attaches assistant reply metadata from session settings', () => {
+  const entries: SessionEntryLike[] = [
+    {
+      id: 'model-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'model_change',
+      modelId: 'gpt-5.4',
+    },
+    {
+      id: 'thinking-1',
+      timestamp: '2026-01-01T00:00:00.100Z',
+      type: 'thinking_level_change',
+      thinkingLevel: 'xhigh',
+    },
+    {
+      id: 'user-1',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      type: 'message',
+      message: {
+        role: 'user',
+        content: 'hello',
+      },
+    },
+    {
+      id: 'assistant-1',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      type: 'message',
+      message: {
+        role: 'assistant',
+        timestamp: Date.parse('2026-01-01T00:00:02.000Z'),
+        content: [
+          { type: 'text', text: 'hi there' },
+        ],
+      },
+    },
+  ];
+
+  const transcript = mapTranscript(entries);
+  const assistant = transcript.find((message) => message.id === 'assistant-1');
+
+  assert.equal(assistant?.modelId, 'gpt-5.4');
+  assert.equal(assistant?.thinkingLevel, 'xhigh');
+});
+
 test('mapTranscript preserves continuation separators in assistant parts', () => {
   const entries: SessionEntryLike[] = [
     {

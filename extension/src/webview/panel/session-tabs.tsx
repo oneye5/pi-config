@@ -15,6 +15,7 @@ interface SessionTabsProps {
   sessions: SessionSummary[];
   openTabPaths: string[];
   runningSessionPaths: string[];
+  unreadFinishedSessionPaths: string[];
   activeSession: SessionSummary | null;
   backendReady: boolean;
   onSelect: (path: string) => void;
@@ -52,6 +53,7 @@ export function SessionTabs({
   sessions,
   openTabPaths,
   runningSessionPaths,
+  unreadFinishedSessionPaths,
   activeSession,
   backendReady,
   onSelect,
@@ -79,6 +81,7 @@ export function SessionTabs({
   const sessionByPath = new Map(sessions.map((session) => [session.path, session]));
   const openIndexByPath = new Map(openTabPaths.map((path, index) => [path, index]));
   const runningPathSet = new Set(runningSessionPaths);
+  const unreadFinishedPathSet = new Set(unreadFinishedSessionPaths);
 
   const pointerMoveListener = useCallback((event: PointerEvent) => {
     pointerMoveHandlerRef.current(event);
@@ -429,21 +432,31 @@ export function SessionTabs({
           const label = session?.name ?? 'New Session';
           const isActive = activeSession?.path === tabPath;
           const isRunning = runningPathSet.has(tabPath);
+          const isUnreadFinished = unreadFinishedPathSet.has(tabPath);
           const originalIndex = openIndexByPath.get(tabPath) ?? index;
+          const title = isUnreadFinished ? `${label} (finished, unread)` : label;
 
           return [
             renderDropGap(index),
-            <div key={tabPath} class={`session-tab${isActive ? ' active' : ''}`} data-drop-target-tab="true">
+            <div
+              key={tabPath}
+              class={`session-tab${isActive ? ' active' : ''}${isUnreadFinished ? ' unread-finished' : ''}`}
+              data-drop-target-tab="true"
+            >
               <button
                 class="session-tab-main"
                 type="button"
                 role="tab"
                 aria-selected={isActive}
-                title={label}
+                title={title}
                 onPointerDown={(event) => handleTabPointerDown(tabPath, originalIndex, event as PointerEvent)}
                 onClick={() => handleTabClick(tabPath)}
               >
-                {isRunning && <span class="session-tab-running" aria-hidden="true" />}
+                {isRunning
+                  ? <span class="session-tab-running" aria-hidden="true" />
+                  : isUnreadFinished
+                    ? <span class="session-tab-finished" aria-hidden="true" />
+                    : null}
                 <span class="session-tab-label">{label}</span>
               </button>
               <button

@@ -3,7 +3,7 @@
  * extension host and the backend process. The host refuses to start the backend
  * unless the values match.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export interface RequestEnvelope<TParams = unknown> {
   id: string;
@@ -106,6 +106,10 @@ export interface ChatMessage {
   parts?: ChatMessagePart[];
   /** Accumulated reasoning/thinking content (only present on assistant messages from reasoning models). */
   thinking?: string;
+  /** Model id used for this assistant response, when the backend can determine it. */
+  modelId?: string;
+  /** Reasoning/thinking level used for this assistant response, when available. */
+  thinkingLevel?: ThinkingLevel;
   status: 'streaming' | 'completed' | 'interrupted' | 'error';
   toolCalls?: ToolCall[];
   /** How long the response took to complete, in milliseconds. Only set on finished assistant messages. */
@@ -153,6 +157,8 @@ export interface MessageStartedPayload {
   requestId: string;
   messageId: string;
   sessionPath: string;
+  modelId?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface MessageDeltaPayload {
@@ -247,11 +253,13 @@ export type PatchOp =
 export interface ChatPrefs {
   autoExpandReasoning: boolean;
   autoExpandToolCalls: boolean;
+  suppressCompletionNotifications: boolean;
 }
 
 export const DEFAULT_CHAT_PREFS: ChatPrefs = {
   autoExpandReasoning: false,
   autoExpandToolCalls: false,
+  suppressCompletionNotifications: false,
 };
 
 /** The full view state sent from the extension host to the webview. */
@@ -259,6 +267,7 @@ export interface ViewState {
   sessions: SessionSummary[];
   openTabPaths: string[];
   runningSessionPaths: string[];
+  unreadFinishedSessionPaths: string[];
   activeSession: SessionSummary | null;
   transcript: ChatMessage[];
   busy: boolean;

@@ -85,7 +85,11 @@ export function SystemPromptMessage({ prompts }: SystemPromptMessageProps) {
     : undefined;
 
   return (
-    <div class="message role-assistant system-prompts-message" data-role="assistant">
+    <div
+      class="message role-assistant system-prompts-message"
+      data-role="assistant"
+      data-scroll-anchor-id="system-prompts"
+    >
       <div class="message-head">
         <div class="message-head-main">
           <span class="message-role">PI</span>
