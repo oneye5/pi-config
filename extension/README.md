@@ -62,9 +62,8 @@ The UI lives inside a VS Code sidebar panel and must feel like it belongs there:
 
 ## Local run analytics
 
-- Run analytics stay local under the extension global storage directory and capture structured run factors, tool rollups, verification-command classes, and file-mutation summaries without storing raw transcript/tool payloads by default.
-- The composer shows local analytics status for the active run and exposes `Done…` / `Rate…` when the active run is ready to score.
-- Use the composer `Export JSON` control or the `pie: Export Run Analytics` command to export the current local analytics store as JSON.
+- Run analytics stay local under `data/outcomes/usage-data/<workspace-hash>/` inside the repo-aligned outcomes directory and capture structured run factors, tool rollups, verification-command classes, and file-mutation summaries without storing raw transcript/tool payloads by default.
+- Analytics UI is intentionally hidden for now; the store updates automatically and refreshes a `run-analytics.json` snapshot alongside the raw JSONL/checkpoint files.
 - Optional setting: `pie.experimentAssignment` — records an explicit treatment/experiment label on new runs for later comparison.
 
 ## Local GUI development

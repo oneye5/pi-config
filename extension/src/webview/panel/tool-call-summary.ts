@@ -7,6 +7,7 @@ import {
 } from '../../shared/tool-call-analysis';
 
 const TOOL_CALL_SUMMARY_MAX_LENGTH = 80;
+const TOOL_CALL_PATH_SUMMARY_MAX_LENGTH = 240;
 
 export interface ToolCallPresentation {
   name: string;
@@ -139,34 +140,58 @@ function convertPathSeparators(value: string, separator: string): string {
   return separator === '\\' ? value.replace(/\//g, '\\') : value;
 }
 
+function truncatePathParentFromLeft(parentPath: string, maxLength: number): string {
+  if (parentPath.length <= maxLength) {
+    return parentPath;
+  }
+
+  if (maxLength <= 0) {
+    return '';
+  }
+
+  const sliceStart = Math.max(0, parentPath.length - maxLength);
+  const slicedParentPath = parentPath.slice(sliceStart);
+  const nextSeparatorOffset = slicedParentPath.search(/[\\/]/);
+  if (nextSeparatorOffset < 0) {
+    return slicedParentPath.replace(/^[\\/]+/, '');
+  }
+
+  const pathSuffix = slicedParentPath.slice(nextSeparatorOffset + 1);
+  return pathSuffix || slicedParentPath.replace(/^[\\/]+/, '');
+}
+
 function truncatePathText(value: string): string {
-  if (value.length <= TOOL_CALL_SUMMARY_MAX_LENGTH) {
+  if (value.length <= TOOL_CALL_PATH_SUMMARY_MAX_LENGTH) {
     return value;
   }
 
   const lastSeparatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
   if (lastSeparatorIndex < 0 || lastSeparatorIndex >= value.length - 1) {
-    return truncateText(value, TOOL_CALL_SUMMARY_MAX_LENGTH);
+    return truncateText(value, TOOL_CALL_PATH_SUMMARY_MAX_LENGTH);
   }
 
+  const separator = value[lastSeparatorIndex] === '\\' ? '\\' : '/';
   const fileSection = value.slice(lastSeparatorIndex + 1);
   if (!fileSection) {
-    return truncateText(value, TOOL_CALL_SUMMARY_MAX_LENGTH);
+    return truncateText(value, TOOL_CALL_PATH_SUMMARY_MAX_LENGTH);
   }
 
-  const ellipsis = '...';
-  const remainingBudget = TOOL_CALL_SUMMARY_MAX_LENGTH - fileSection.length;
-  if (remainingBudget <= ellipsis.length) {
-    return truncateText(fileSection, TOOL_CALL_SUMMARY_MAX_LENGTH);
+  const parentPath = value.slice(0, lastSeparatorIndex).replace(/[\\/]+$/, '');
+  const fullParentBudget = TOOL_CALL_PATH_SUMMARY_MAX_LENGTH - fileSection.length - separator.length;
+  if (parentPath.length <= fullParentBudget) {
+    return `${parentPath}${separator}${fileSection}`;
   }
 
-  const pathSection = value.slice(0, lastSeparatorIndex + 1);
-  const visiblePathBudget = remainingBudget - ellipsis.length;
-  if (pathSection.length <= visiblePathBudget) {
-    return `${pathSection}${fileSection}`;
+  const clippedPathMarker = `...${separator}`;
+  const truncatedParentBudget = TOOL_CALL_PATH_SUMMARY_MAX_LENGTH - fileSection.length - clippedPathMarker.length - separator.length;
+  if (truncatedParentBudget <= 0) {
+    return truncateText(fileSection, TOOL_CALL_PATH_SUMMARY_MAX_LENGTH);
   }
 
-  return `${ellipsis}${pathSection.slice(-visiblePathBudget)}${fileSection}`;
+  const truncatedParentPath = truncatePathParentFromLeft(parentPath, truncatedParentBudget);
+  return truncatedParentPath
+    ? `${clippedPathMarker}${truncatedParentPath}${separator}${fileSection}`
+    : `${clippedPathMarker}${fileSection}`;
 }
 
 function summarizePathCandidate(rawValue: string, workingDirectory?: string | null): { summary: string; summaryPath?: string } | null {

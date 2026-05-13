@@ -476,6 +476,57 @@ test('lifecycle: tool.started → tool.finished', () => {
   assert.equal(msg?.toolCalls?.[0]?.result, 'const x = 1;');
 });
 
+test('upsertMessage preserves resolved tool failures already captured from tool.finished', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+  store.dispatch(transcriptActions.clearTranscript(session1.path));
+  store.dispatch(transcriptActions.ensureAssistantMessage({ sessionPath: session1.path, messageId: 'msg-tool' }));
+
+  const failedResult = {
+    content: [{ type: 'text', text: 'Too many parallel tasks (6). Max is 5.' }],
+    details: { mode: 'parallel', results: [] },
+    isError: true,
+  };
+
+  store.dispatch(transcriptActions.upsertToolCall({
+    sessionPath: session1.path,
+    messageId: 'msg-tool',
+    toolCall: {
+      id: 'tc-sub',
+      name: 'subagent',
+      input: { tasks: [{ agent: 'scout', task: 'Investigate' }] },
+      result: failedResult,
+      status: 'failed',
+    },
+  }));
+
+  store.dispatch(transcriptActions.upsertMessage({
+    sessionPath: session1.path,
+    message: {
+      id: 'msg-tool',
+      role: 'assistant',
+      createdAt: '',
+      markdown: '',
+      status: 'completed',
+      toolCalls: [{
+        id: 'tc-sub',
+        name: 'subagent',
+        input: { tasks: [{ agent: 'scout', task: 'Investigate' }] },
+        status: 'completed',
+      }],
+    },
+  }));
+
+  const msg = store.getState().transcript.bySession[session1.path].find((m) => m.id === 'msg-tool');
+  const toolCall = msg?.toolCalls?.find((item) => item.id === 'tc-sub');
+  const toolPart = msg?.parts?.find((part) => part.kind === 'toolCall' && part.toolCall.id === 'tc-sub');
+
+  assert.equal(toolCall?.status, 'failed');
+  assert.deepEqual(toolCall?.result, failedResult);
+  assert.equal(toolPart?.kind, 'toolCall');
+  assert.equal(toolPart?.kind === 'toolCall' ? toolPart.toolCall.status : undefined, 'failed');
+});
+
 // ---------------------------------------------------------------------------
 // Model settings hydration
 // ---------------------------------------------------------------------------

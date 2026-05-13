@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { StatsService } from '../src/host/stats-service';
+import { workspaceHash } from '../src/host/stats-service-helpers';
 import { createAppStore, sessionStateActions, sessionsActions, settingsActions } from '../src/host/store';
 import type { ComposerInput } from '../src/shared/protocol';
 
@@ -18,10 +19,10 @@ async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
 }
 
 async function getRunStorageDir(tempDir: string): Promise<string> {
-  const runsRoot = path.join(tempDir, 'runs');
-  const entries = await fs.readdir(runsRoot);
+  const usageDataRoot = path.join(tempDir, 'data', 'outcomes');
+  const entries = await fs.readdir(usageDataRoot);
   assert.equal(entries.length, 1, 'expected one hashed workspace directory');
-  return path.join(runsRoot, entries[0]);
+  return path.join(usageDataRoot, entries[0]);
 }
 
 async function readJsonl(filePath: string): Promise<unknown[]> {
@@ -53,7 +54,8 @@ test('StatsService records run outcomes and persists snapshot metrics', async ()
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-a',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -129,6 +131,11 @@ test('StatsService records run outcomes and persists snapshot metrics', async ()
       taskGroupId: string;
       outcome: { resolution: string; satisfaction: number };
     }>;
+    const autoExport = JSON.parse(await fs.readFile(path.join(storageDir, 'run-analytics.json'), 'utf8')) as {
+      completedRuns: Array<{ runId: string; status: string }>;
+      openRuns: Array<{ runId: string }>;
+      outcomes: Array<{ runId: string }>;
+    };
 
     assert.equal(snapshotEntries.length, 1);
     assert.equal(snapshotEntries[0].kind, 'run_snapshot');
@@ -151,6 +158,37 @@ test('StatsService records run outcomes and persists snapshot metrics', async ()
     assert.equal(outcomeEntries[0].runId, 'id-1');
     assert.equal(outcomeEntries[0].taskGroupId, 'id-2');
     assert.deepEqual(outcomeEntries[0].outcome, { resolution: 'resolved', satisfaction: 5 });
+
+    assert.equal(autoExport.completedRuns.length, 1);
+    assert.equal(autoExport.completedRuns[0]?.runId, 'id-1');
+    assert.equal(autoExport.completedRuns[0]?.status, 'scored');
+    assert.equal(autoExport.openRuns.length, 0);
+    assert.equal(autoExport.outcomes[0]?.runId, 'id-1');
+  });
+});
+
+test('StatsService migrates legacy analytics files into data/outcomes', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-migration';
+    const legacyStorageDir = path.join(tempDir, 'usage-data', workspaceHash(workspaceId));
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(legacyStorageDir, 'legacy-marker.txt'), 'legacy');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    const storageDir = await getRunStorageDir(tempDir);
+    assert.equal(await fs.readFile(path.join(storageDir, 'legacy-marker.txt'), 'utf8'), 'legacy');
+
+    await stats.shutdown();
   });
 });
 
@@ -174,7 +212,8 @@ test('StatsService starts a new task group on the next send after startNewTask',
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-b',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -241,7 +280,8 @@ test('StatsService restores active run summaries from checkpointed state', async
 
     let idCounter = 0;
     const firstStats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-c',
       dispatch: firstStore.dispatch,
       getState: firstStore.getState,
@@ -253,7 +293,8 @@ test('StatsService restores active run summaries from checkpointed state', async
     await firstStats.flush();
 
     const secondStats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-c',
       dispatch: secondStore.dispatch,
       getState: secondStore.getState,
@@ -270,6 +311,91 @@ test('StatsService restores active run summaries from checkpointed state', async
     await firstStats.shutdown();
     await secondStats.shutdown();
     secondStore.dispatch(sessionStateActions.setActiveRunSummary({ sessionPath, summary: null }));
+  });
+});
+
+test('StatsService restores completed runs and queued new-task state across restart', async () => {
+  await withTempDir(async (tempDir) => {
+    const firstStore = createAppStore();
+    const secondStore = createAppStore();
+    const sessionPath = '/workspace/session-c-rated.jsonl';
+
+    for (const store of [firstStore, secondStore]) {
+      store.dispatch(sessionsActions.upsertSession({
+        path: sessionPath,
+        name: 'Session C Rated',
+        cwd: '/workspace',
+        modifiedAt: new Date().toISOString(),
+        messageCount: 0,
+        modelId: 'claude',
+      }));
+      store.dispatch(settingsActions.setModelSettings({
+        defaultModel: 'claude',
+        defaultThinkingLevel: 'minimal',
+      }));
+    }
+
+    let idCounter = 0;
+    const firstStats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId: 'workspace-c-rated',
+      dispatch: firstStore.dispatch,
+      getState: firstStore.getState,
+      createId: () => `id-${++idCounter}`,
+    });
+
+    await firstStats.start();
+    firstStats.prepareForSend(sessionPath, []);
+    firstStats.recordOutcome(sessionPath, { resolution: 'resolved', satisfaction: 4 });
+    firstStats.startNewTask(sessionPath);
+    await firstStats.flush();
+    await firstStats.shutdown();
+
+    const secondStats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId: 'workspace-c-rated',
+      dispatch: secondStore.dispatch,
+      getState: secondStore.getState,
+      createId: () => `id-${++idCounter}`,
+    });
+
+    await secondStats.start();
+
+    assert.deepEqual(secondStore.getState().sessionState.activeRunSummaryBySession[sessionPath], {
+      runId: 'id-1',
+      status: 'scored',
+      scored: true,
+      nextSendStartsNewTask: true,
+    });
+
+    const nextRunId = secondStats.prepareForSend(sessionPath, []);
+    assert.equal(nextRunId, 'id-3');
+    assert.deepEqual(secondStore.getState().sessionState.activeRunSummaryBySession[sessionPath], {
+      runId: 'id-3',
+      status: 'open',
+      scored: false,
+    });
+
+    await secondStats.shutdown();
+
+    const storageDir = await getRunStorageDir(tempDir);
+    const snapshotEntries = await readJsonl(path.join(storageDir, 'run-snapshots.jsonl')) as Array<{
+      run: {
+        runId: string;
+        taskGroupId: string;
+        status: string;
+      };
+    }>;
+
+    assert.equal(snapshotEntries.length, 2);
+    assert.equal(snapshotEntries[0].run.runId, 'id-1');
+    assert.equal(snapshotEntries[0].run.taskGroupId, 'id-2');
+    assert.equal(snapshotEntries[0].run.status, 'scored');
+    assert.equal(snapshotEntries[1].run.runId, 'id-3');
+    assert.equal(snapshotEntries[1].run.taskGroupId, 'id-4');
+    assert.equal(snapshotEntries[1].run.status, 'closed_unscored');
   });
 });
 
@@ -293,7 +419,8 @@ test('StatsService counts multiple assistant turns using distinct turn ids withi
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-d',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -343,7 +470,8 @@ test('StatsService marks runs mixed when model config changes mid-run', async ()
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-e',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -388,7 +516,8 @@ test('StatsService carries unsupported input attempts into the next run snapshot
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-f',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -455,7 +584,8 @@ test('StatsService captures structured analytics factors and experiment assignme
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-g',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -503,7 +633,8 @@ test('StatsService rolls up tool usage, verification commands, subagents, and fi
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-h',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -633,7 +764,8 @@ test('StatsService tracks busy durations and mixed treatment changes', async () 
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-i',
       dispatch: store.dispatch,
       getState: store.getState,

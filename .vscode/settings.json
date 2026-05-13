@@ -9,7 +9,7 @@
   "github.copilot.chat.claudeAgent.allowDangerouslySkipPermissions": true,
   // Hide PI runtime artifacts from the explorer
   "files.exclude": {
-    "sessions/": true,
+    "data/": true,
     "auth.json": true,
     "bin/": true,
     "git/": true,

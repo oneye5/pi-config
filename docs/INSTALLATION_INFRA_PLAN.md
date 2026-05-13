@@ -24,8 +24,8 @@ This keeps behavior consistent across platforms without duplicating logic.
 3. If `pi` is missing, offer to install it automatically.
 4. Set and persist `PI_CODING_AGENT_DIR`.
 5. Restore PI packages via `pi update`.
-6. Migrate or preserve `auth.json` and local `sessions/` history when applicable, including repair of reachable absolute/`~` legacy `sessionDir` overrides.
-7. Make the local session-history model explicit, including sensitivity, working-directory bucketing caveats, git-ignored status, and override precedence (`PI_CODING_AGENT_SESSION_DIR`). Document that relative `sessionDir` overrides require manual cleanup.
+6. Migrate or preserve `auth.json` and local `data/outcomes/sessions/` history when applicable, including repair of reachable absolute/`~` legacy `sessionDir` overrides.
+7. Make the local session-history model explicit, including sensitivity, working-directory bucketing caveats, git-ignored status, and the repo-local `settings.json` `sessionDir` override. Document that relative `sessionDir` overrides require manual cleanup.
 8. Check whether PI auth, provider, and default model are configured.
 9. If not configured, guide the user through provider/auth setup.
 10. Install recommended tools/extensions.

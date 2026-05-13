@@ -203,6 +203,8 @@ export interface SystemPromptEntry {
   text: string;
   summary: string;
   availability: SystemPromptAvailability;
+  /** Full path or extra detail shown on hover when the title is shortened. */
+  tooltip?: string;
 }
 
 export interface SessionContextFileFactor {
@@ -374,6 +376,8 @@ export interface ActiveRunSummary {
   runId: string;
   status: ActiveRunStatus;
   scored: boolean;
+  /** True when the next send is queued to start a new task group. */
+  nextSendStartsNewTask?: boolean;
 }
 
 export type RunOutcomeResolution = 'resolved' | 'partially_resolved' | 'unresolved';
@@ -412,7 +416,7 @@ export interface ViewState {
   transcript: ChatMessage[];
   /** Host-owned pending inputs for the active session. */
   pendingComposerInputs: ComposerInput[];
-  /** Null when the active session has no open run. */
+  /** Most recent run summary for the active session, including recently completed runs. */
   activeRunSummary: ActiveRunSummary | null;
   /** Per-session run summaries used for tab affordances and context menus. */
   runSummariesBySession: Record<string, ActiveRunSummary | null>;

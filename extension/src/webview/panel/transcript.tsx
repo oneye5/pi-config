@@ -11,6 +11,7 @@ import type {
   ToolCall,
   UserContentPart,
 } from '../../shared/protocol';
+import { formatToolResult } from '../../shared/tool-result-format';
 import type { Overlay } from './overlay';
 import {
   advanceSmoothScrollTop,
@@ -24,6 +25,7 @@ import {
 import { syncDisclosureOpenState } from './disclosure-state';
 import { renderMarkdown, reasoningSummary } from './markdown';
 import { SystemPromptMessage } from './system-prompts';
+import { isTranscriptHydrating } from './transcript-state';
 import { assistantReplyMeta, formatDuration, formatTimestamp, roleLabel } from './transcript-header';
 import { shouldOpenSubagentContextMenu, shouldOpenUserMessageEditor } from './transcript-interactions';
 import { getToolCallPresentation, summarizeToolCall } from './tool-call-summary';
@@ -342,7 +344,7 @@ function ToolCallHeader({ open, name, status, summary, summaryPath, sizeHint, on
             >
               {pathSummary ? (
                 <span class="tool-call-summary tool-call-summary-file">
-                  <span class={`tool-call-file-path${pathSummary.pathSection ? '' : ' is-empty'}`}>{pathSummary.pathSection ?? ''}</span>
+                  <span class={`tool-call-file-path${pathSummary.pathSection ? '' : ' is-empty'}`}><span class="tool-call-file-path-text">{pathSummary.pathSection ?? ''}</span></span>
                   <span class="tool-call-file-name">{pathSummary.fileSection}</span>
                 </span>
               ) : <span class="tool-call-summary">{summary}</span>}
@@ -423,61 +425,108 @@ interface RawContentPart {
 }
 
 interface RawMessage {
-  role: 'user' | 'assistant';
-  content: RawContentPart[];
+  role: 'user' | 'assistant' | 'toolResult';
+  content?: string | RawContentPart[];
   timestamp?: number;
+  toolCallId?: string;
+  details?: unknown;
+  isError?: boolean;
 }
 
-interface SubagentSingleResult {
+export interface SubagentSingleResult {
   agent: string;
   task: string;
+  /** `-1` while the subagent is still running. */
   exitCode: number;
   messages: RawMessage[];
   model?: string;
+  stderr?: string;
+  stopReason?: string;
+  errorMessage?: string;
   /** Tool names currently executing inside this subagent run. */
   runningTools?: string[];
 }
 
-interface SubagentResult {
+export interface SubagentResult {
   mode: 'single' | 'parallel' | 'chain';
   results: SubagentSingleResult[];
 }
 
-function rawMessagesToChatMessages(rawMessages: RawMessage[], idPrefix: string): ChatMessage[] {
-  const chatMessages: ChatMessage[] = [];
+interface RawToolResultSnapshot {
+  result: unknown;
+  status: ToolCall['status'];
+}
 
-  // Collect tool results by id for lookup across all user messages
-  const toolResultMap = new Map<string, unknown>();
+function rawMessageParts(message: RawMessage): RawContentPart[] {
+  return Array.isArray(message.content) ? message.content : [];
+}
+
+function rawMessageText(message: RawMessage): string {
+  if (typeof message.content === 'string') {
+    return message.content;
+  }
+
+  return rawMessageParts(message)
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text ?? '')
+    .join('\n\n');
+}
+
+function collectRawToolResults(rawMessages: RawMessage[]): Map<string, RawToolResultSnapshot> {
+  const toolResultMap = new Map<string, RawToolResultSnapshot>();
+
   for (const msg of rawMessages) {
-    if (msg.role === 'user') {
-      for (const part of msg.content) {
-        if (part.type === 'toolResult' && part.id !== undefined) {
-          toolResultMap.set(String(part.id), part.result);
-        }
+    if (msg.role === 'toolResult' && msg.toolCallId) {
+      toolResultMap.set(String(msg.toolCallId), {
+        result: formatToolResult(msg),
+        status: msg.isError ? 'failed' : 'completed',
+      });
+      continue;
+    }
+
+    if (msg.role !== 'user') {
+      continue;
+    }
+
+    for (const part of rawMessageParts(msg)) {
+      if (part.type === 'toolResult' && part.id !== undefined) {
+        toolResultMap.set(String(part.id), {
+          result: part.result,
+          status: 'completed',
+        });
       }
     }
   }
+
+  return toolResultMap;
+}
+
+export function rawMessagesToChatMessages(rawMessages: RawMessage[], idPrefix: string): ChatMessage[] {
+  const chatMessages: ChatMessage[] = [];
+  const toolResultMap = collectRawToolResults(rawMessages);
 
   let idx = 0;
   let currentAssistant: ChatMessage | undefined;
 
   for (const msg of rawMessages) {
-    // Skip user messages that are purely tool results
-    if (msg.role === 'user' && msg.content.every((p) => p.type === 'toolResult')) {
+    if (msg.role === 'toolResult') {
+      continue;
+    }
+
+    const contentParts = rawMessageParts(msg);
+
+    // Skip legacy user messages that only carried tool result payloads.
+    if (msg.role === 'user' && contentParts.length > 0 && contentParts.every((p) => p.type === 'toolResult')) {
       continue;
     }
 
     if (msg.role === 'user') {
       currentAssistant = undefined;
-      const text = msg.content
-        .filter((p) => p.type === 'text')
-        .map((p) => p.text ?? '')
-        .join('\n\n');
       chatMessages.push({
         id: `${idPrefix}-${idx++}`,
         role: 'user',
         createdAt: msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString(),
-        markdown: text,
+        markdown: rawMessageText(msg),
         status: 'completed',
       });
       continue;
@@ -485,7 +534,12 @@ function rawMessagesToChatMessages(rawMessages: RawMessage[], idPrefix: string):
 
     if (msg.role === 'assistant') {
       const orderedParts: ChatMessagePart[] = [];
-      for (const part of msg.content) {
+
+      if (typeof msg.content === 'string') {
+        appendAssistantTextPart(orderedParts, 'text', msg.content);
+      }
+
+      for (const part of contentParts) {
         if (part.type === 'text') {
           appendAssistantTextPart(orderedParts, 'text', part.text ?? '');
           continue;
@@ -497,12 +551,13 @@ function rawMessagesToChatMessages(rawMessages: RawMessage[], idPrefix: string):
         }
 
         if (part.type === 'toolCall' && part.id && part.name) {
+          const toolResult = toolResultMap.get(String(part.id));
           upsertAssistantToolPart(orderedParts, {
             id: part.id,
             name: part.name,
             input: part.arguments ?? {},
-            result: toolResultMap.get(String(part.id)),
-            status: toolResultMap.has(String(part.id)) ? 'completed' : 'running',
+            result: toolResult?.result,
+            status: toolResult?.status ?? 'running',
           });
         }
       }
@@ -536,6 +591,73 @@ function rawMessagesToChatMessages(rawMessages: RawMessage[], idPrefix: string):
   return chatMessages;
 }
 
+function isSubagentSingleResultRunning(result: SubagentSingleResult): boolean {
+  return result.exitCode === -1;
+}
+
+function isSubagentSingleResultFailed(result: SubagentSingleResult): boolean {
+  if (isSubagentSingleResultRunning(result)) {
+    return false;
+  }
+
+  return result.exitCode !== 0 || result.stopReason === 'error' || result.stopReason === 'aborted';
+}
+
+function nonEmptyText(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  return text ? text : undefined;
+}
+
+function subagentSingleResultFallbackMarkdown(result: SubagentSingleResult): string {
+  if (!isSubagentSingleResultFailed(result)) {
+    return '(no output)';
+  }
+
+  const detail = nonEmptyText(result.errorMessage) ?? nonEmptyText(result.stderr);
+  const failureLabel =
+    result.stopReason === 'aborted' ? 'Aborted'
+    : result.stopReason === 'error' ? 'Error'
+    : result.exitCode > 0 ? `Exit code ${result.exitCode}`
+    : 'Failed';
+
+  return detail ? `${failureLabel}: ${detail}` : `${failureLabel}: agent failed before producing any output.`;
+}
+
+export function getRenderableSubagentResult(rawResult: unknown): SubagentResult | undefined {
+  const raw = rawResult as { details?: unknown; results?: unknown } | undefined;
+
+  if (raw && typeof raw === 'object' && Array.isArray(raw.results) && raw.results.length > 0) {
+    return raw as SubagentResult;
+  }
+
+  const nested = raw?.details as { results?: unknown } | undefined;
+  if (nested && typeof nested === 'object' && Array.isArray(nested.results) && nested.results.length > 0) {
+    return nested as SubagentResult;
+  }
+
+  return undefined;
+}
+
+export function subagentSingleResultToChatMessages(result: SubagentSingleResult, idPrefix: string): ChatMessage[] {
+  const chatMessages = rawMessagesToChatMessages(Array.isArray(result.messages) ? result.messages : [], idPrefix);
+  if (chatMessages.length > 0) {
+    return chatMessages;
+  }
+
+  if (isSubagentSingleResultRunning(result)) {
+    return [];
+  }
+
+  return [{
+    id: `${idPrefix}-fallback`,
+    role: 'assistant',
+    createdAt: '',
+    markdown: subagentSingleResultFallbackMarkdown(result),
+    status: isSubagentSingleResultFailed(result) ? 'error' : 'completed',
+    ...(result.model ? { modelId: result.model } : {}),
+  }];
+}
+
 // ─── SubagentBlock ───────────────────────────────────────────────────────────
 
 interface SubagentBlockProps {
@@ -557,16 +679,10 @@ function SubagentBlock({
 }: SubagentBlockProps) {
   const [open, setOpen] = useDisclosureOpen(prefs.autoExpandSubagentCalls);
 
-  // The SDK wraps the tool result in AgentToolResult<SubagentDetails> = { content, details }.
-  // Normalise both the nested shape and any legacy flat shape.
-  const rawResult = toolCall.result as any;
-  const result: SubagentResult | undefined =
-    rawResult?.results ? rawResult
-    : rawResult?.details?.results ? rawResult.details
-    : undefined;
+  const result = getRenderableSubagentResult(toolCall.result);
 
-  if (!result?.results) {
-    // No partial or final result yet — fall back to generic card
+  if (!result) {
+    // Dispatch/setup failures may still have a failed top-level result but no child runs.
     return (
       <ToolCallCard
         toolCall={toolCall}
@@ -618,7 +734,7 @@ function SubagentBlock({
           onKeyDown={(e) => e.stopPropagation()}
         >
           {result.results.map((r, i) => {
-            const msgs = rawMessagesToChatMessages(r.messages, `${toolCall.id}-${i}`);
+            const msgs = subagentSingleResultToChatMessages(r, `${toolCall.id}-${i}`);
             return (
               <div key={i} class={`subagent-result${multipleResults ? ' labeled' : ''}`}>
                 {multipleResults && (
@@ -813,13 +929,11 @@ export function MessageItem({
   const isEditing = editingId === message.id;
   const createdAtLabel = formatTimestamp(message.createdAt);
   const statusLabel =
-    isCurrentlyStreaming ? 'Streaming'
-    : message.status === 'interrupted' ? 'Interrupted'
+    message.status === 'interrupted' ? 'Interrupted'
     : message.status === 'error' ? 'Error'
     : null;
   const statusTone =
-    isCurrentlyStreaming ? 'streaming'
-    : message.status === 'interrupted' ? 'interrupted'
+    message.status === 'interrupted' ? 'interrupted'
     : message.status === 'error' ? 'error'
     : '';
   const replyMeta = assistantReplyMeta(message);
@@ -1007,7 +1121,8 @@ export function TranscriptView({
   const followAnimationFrameRef = useRef<number | null>(null);
   const targetScrollTopRef = useRef<number | null>(null);
   const previousSessionKeyRef = useRef<string | null | undefined>(undefined);
-  const hasScrollableTranscript = transcript.length > 0 || systemPrompts.length > 0;
+  const transcriptHydrating = isTranscriptHydrating({ transcript, systemPrompts });
+  const hasScrollableTranscript = !transcriptHydrating;
 
   if (previousSessionKeyRef.current !== sessionKey) {
     previousSessionKeyRef.current = sessionKey;
@@ -1186,12 +1301,11 @@ export function TranscriptView({
     scrollAnchorRef.current = null;
   }, [sessionKey, transcript.length, busy, overlay, systemPrompts.length, ensureFollowAnimation, stopFollowAnimation]);
 
-  if (transcript.length === 0 && systemPrompts.length === 0) {
+  if (transcriptHydrating) {
     return (
       <div class="transcript">
-        <div class="empty-state">
-          <div class="empty-state-title">Start the conversation</div>
-          <div class="empty-state-sub">Messages, reasoning, and tool steps will appear here.</div>
+        <div class="transcript-loading" role="status" aria-label="Loading conversation">
+          <div class="loading-wheel" aria-hidden="true" />
         </div>
       </div>
     );

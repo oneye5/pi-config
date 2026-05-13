@@ -12,7 +12,7 @@ export interface FileMutationDelta {
   lineModifications: number;
 }
 
-type SizeHintPrefix = '+' | '-' | '~';
+type SizeHintPrefix = '+' | '-' | '';
 
 interface EditSizeStats {
   additions: number;
@@ -288,7 +288,7 @@ function formatEditSizeHint(stats: EditSizeStats | null): string | null {
     return formatLineHint('-', stats.deletions);
   }
 
-  return formatLineHint('~', total);
+  return formatLineHint('', total);
 }
 
 function looksLikeReadTool(toolName: string): boolean {
@@ -335,7 +335,7 @@ function readSizeHintFromToolCall(toolCall: ToolCall): string | null {
       ? Math.min(requestedLineCount, resultLineCount)
       : requestedLineCount ?? resultLineCount;
 
-  return formatLineHint('~', lineCount);
+  return formatLineHint('', lineCount);
 }
 
 function createSizeHintFromToolCall(toolCall: ToolCall): string | null {

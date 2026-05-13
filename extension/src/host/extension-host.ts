@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 import * as vscode from 'vscode';
 
 import { BackendClient } from './backend-client';
@@ -14,10 +16,20 @@ import type { WebviewToHostMessage } from '../shared/protocol';
 
 export const SIDEBAR_VIEW_TYPE = 'pie.sessionsView';
 
+function getDataOutcomesRootPath(context: vscode.ExtensionContext): string {
+  const configuredRoot = process.env.PI_CODING_AGENT_DIR?.trim();
+  return configuredRoot
+    ? path.join(configuredRoot, 'data', 'outcomes')
+    : path.join(context.globalStorageUri.fsPath, 'data', 'outcomes');
+}
+
 function getWorkspaceAnalyticsId(): string {
   const folders = vscode.workspace.workspaceFolders;
   if (folders && folders.length > 0) {
-    return folders.map((folder) => folder.uri.toString()).join('|');
+    return folders
+      .map((folder) => folder.uri.toString())
+      .sort((left, right) => left.localeCompare(right))
+      .join('|');
   }
   return vscode.workspace.name ?? 'no-workspace';
 }
@@ -33,8 +45,11 @@ export class PieExtension implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly backend: BackendClient,
   ) {
+    const dataOutcomesRootPath = getDataOutcomesRootPath(context);
+
     this.statsService = new StatsService({
-      globalStoragePath: context.globalStorageUri.fsPath,
+      dataOutcomesRootPath,
+      legacyUsageDataRootPath: context.globalStorageUri.fsPath,
       workspaceId: getWorkspaceAnalyticsId(),
       scheduleRender: () => this.scheduleRender(),
       getExperimentAssignment: () => this.getExperimentAssignment(),
@@ -93,9 +108,6 @@ export class PieExtension implements vscode.Disposable {
       vscode.commands.registerCommand('pie.restartBackend', async () => {
         await this.restart();
       }),
-      vscode.commands.registerCommand('pie.exportRunAnalytics', async () => {
-        await this.exportRunAnalytics();
-      }),
       vscode.commands.registerCommand('pie.attachFiles', async (
         resource?: vscode.Uri,
         resources?: vscode.Uri[],
@@ -120,29 +132,6 @@ export class PieExtension implements vscode.Disposable {
       .get<string>('experimentAssignment', '')
       .trim();
     return configured.length > 0 ? configured : null;
-  }
-
-  private async exportRunAnalytics(): Promise<void> {
-    const defaultFileName = `pie-run-analytics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    const defaultUri = vscode.Uri.joinPath(this.context.globalStorageUri, defaultFileName);
-    const target = await vscode.window.showSaveDialog({
-      defaultUri,
-      filters: { JSON: ['json'] },
-      saveLabel: 'Export pie run analytics',
-      title: 'Export pie run analytics',
-    });
-    if (!target) {
-      return;
-    }
-
-    try {
-      const payload = await this.statsService.exportRunAnalytics(target.fsPath);
-      void vscode.window.showInformationMessage(
-        `Exported ${payload.completedRuns.length} completed run(s) and ${payload.openRuns.length} open run(s).`,
-      );
-    } catch (error) {
-      void vscode.window.showErrorMessage(`Failed to export pie run analytics: ${(error as Error).message}`);
-    }
   }
 
   private async attachFiles(
@@ -268,10 +257,6 @@ export class PieExtension implements vscode.Disposable {
         await this.service.addFilesystemPaths(undefined, uris.map((u) => u.fsPath), 'picker');
         return;
       }
-
-      case 'exportRunAnalytics':
-        await this.exportRunAnalytics();
-        return;
 
       case 'addComposerInput':
         await this.service.addComposerInput(msg.sessionPath, msg.input);

@@ -17,7 +17,6 @@ import { DEFAULT_CHAT_PREFS } from '../../shared/protocol';
 import { emptyOverlay, applyPatch } from './overlay';
 import { resolvePanelSurface } from './panel-state';
 import { TranscriptView } from './transcript';
-import { RunOutcomeDialog } from './run-outcome-dialog';
 import {
   type ChatPrefContextType,
   type TranscriptContextMenuType,
@@ -26,6 +25,7 @@ import {
   toggleChatPrefForContext,
 } from './chat-prefs';
 import { SessionTabs, Composer } from './ui';
+import { RunOutcomeDialog } from './run-outcome-dialog';
 
 // ─── VS Code API ─────────────────────────────────────────────────────────────
 
@@ -146,8 +146,8 @@ function App() {
   const [overlay, setOverlay] = useState(emptyOverlay);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [runOutcomeDialog, setRunOutcomeDialog] = useState<{ sessionPath: string; label: string } | null>(null);
   const [draftRestore, setDraftRestore] = useState<{ text: string; nonce: number } | null>(null);
+  const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
 
   // Track last revision via ref (not state) to avoid triggering snapshot requests on every re-render
   const lastRevisionRef = useRef(0);
@@ -158,8 +158,8 @@ function App() {
   const clearTransientUi = useCallback(() => {
     setEditingId(null);
     setContextMenu(null);
-    setRunOutcomeDialog(null);
     setDraftRestore(null);
+    setShowOutcomeDialog(false);
   }, []);
 
   useEffect(() => {
@@ -255,7 +255,6 @@ function App() {
   const handleCancelEdit = useCallback(() => setEditingId(null), []);
   const handleInterrupt = useCallback(() => postMessage({ type: 'interrupt' }), []);
   const handleOpenFilePicker = useCallback(() => postMessage({ type: 'openFilePicker' }), []);
-  const handleExportRunAnalytics = useCallback(() => postMessage({ type: 'exportRunAnalytics' }), []);
   const handleAddComposerInput = useCallback((input: ComposerInputDraft) => {
     const sessionPath = activeSessionPathRef.current;
     if (!sessionPath) {
@@ -278,6 +277,18 @@ function App() {
     postMessage({ type: 'moveSessionTab', sessionPath, fromIndex, toIndex });
   }, []);
 
+  const handleMarkComplete = useCallback(() => setShowOutcomeDialog(true), []);
+
+  const handleRecordOutcome = useCallback((outcome: RunOutcome) => {
+    const sessionPath = activeSessionPathRef.current;
+    if (!sessionPath) return;
+    postMessage({ type: 'recordOutcome', sessionPath, outcome });
+    postMessage({ type: 'closeSession', sessionPath });
+    setShowOutcomeDialog(false);
+  }, []);
+
+  const handleCancelOutcome = useCallback(() => setShowOutcomeDialog(false), []);
+
   const handleModelChange = useCallback((model: string, thinkingLevel: ThinkingLevel) => {
     postMessage({
       type: 'setModel',
@@ -299,27 +310,6 @@ function App() {
     setContextMenu({ type, rawData, x: e.clientX, y: e.clientY });
   }, []);
 
-  const handleRecordOutcome = useCallback((sessionPath: string) => {
-    const sessionLabel = viewState.sessions.find((session) => session.path === sessionPath)?.name ?? 'Session';
-    setRunOutcomeDialog({ sessionPath, label: sessionLabel });
-  }, [viewState.sessions]);
-
-  const handleSubmitRunOutcome = useCallback((outcome: RunOutcome) => {
-    if (!runOutcomeDialog) {
-      return;
-    }
-    postMessage({ type: 'recordOutcome', sessionPath: runOutcomeDialog.sessionPath, outcome });
-    setRunOutcomeDialog(null);
-  }, [runOutcomeDialog]);
-
-  const handleStartNewTask = useCallback((sessionPath: string) => {
-    postMessage({ type: 'startNewTask', sessionPath });
-  }, []);
-
-  const handleContinueTask = useCallback((sessionPath: string) => {
-    postMessage({ type: 'continueTask', sessionPath });
-  }, []);
-
   const {
     sessions,
     openTabPaths,
@@ -329,7 +319,6 @@ function App() {
     transcript,
     pendingComposerInputs,
     activeRunSummary,
-    runSummariesBySession,
     busy,
     notice,
     backendReady,
@@ -341,25 +330,33 @@ function App() {
     systemPrompts,
   } = viewState;
 
+  // Close outcome dialog if the active session changes.
+  useEffect(() => {
+    if (showOutcomeDialog) {
+      setShowOutcomeDialog(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.path]);
+
   const panelSurface = resolvePanelSurface({ backendReady, notice, openTabPaths });
   const hasActiveTabs = panelSurface === 'session';
   const showSessionChrome = panelSurface !== 'loading';
 
   return (
     <div id="app">
+      {showOutcomeDialog && activeSession && (
+        <RunOutcomeDialog
+          sessionLabel={activeSession.name}
+          onCancel={handleCancelOutcome}
+          onSubmit={handleRecordOutcome}
+        />
+      )}
       {contextMenu && (
         <ContextMenu
           menu={contextMenu}
           prefs={prefs}
           onSetPrefs={handleSetPrefs}
           onClose={() => setContextMenu(null)}
-        />
-      )}
-      {runOutcomeDialog && (
-        <RunOutcomeDialog
-          sessionLabel={runOutcomeDialog.label}
-          onCancel={() => setRunOutcomeDialog(null)}
-          onSubmit={handleSubmitRunOutcome}
         />
       )}
       {notice && (
@@ -375,15 +372,11 @@ function App() {
           runningSessionPaths={runningSessionPaths}
           unreadFinishedSessionPaths={unreadFinishedSessionPaths}
           activeSession={activeSession}
-          runSummariesBySession={runSummariesBySession}
           backendReady={backendReady}
           onSelect={handleSelectTab}
           onClose={handleCloseTab}
           onMove={handleMoveTab}
           onNew={handleNewSession}
-          onRecordOutcome={handleRecordOutcome}
-          onStartNewTask={handleStartNewTask}
-          onContinueTask={handleContinueTask}
         />
       )}
 
@@ -442,14 +435,9 @@ function App() {
           onOpenFilePicker={handleOpenFilePicker}
           onAddInput={handleAddComposerInput}
           onRemoveInput={handleRemoveComposerInput}
-          onRecordOutcome={() => {
-            if (activeSession?.path) {
-              handleRecordOutcome(activeSession.path);
-            }
-          }}
-          onExportRunAnalytics={handleExportRunAnalytics}
           onModelChange={handleModelChange}
           onSetPrefs={handleSetPrefs}
+          onMarkComplete={handleMarkComplete}
         />
       )}
     </div>

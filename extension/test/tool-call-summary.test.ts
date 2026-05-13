@@ -90,17 +90,112 @@ test('getToolCallPresentation keeps out-of-workdir file paths absolute', () => {
   });
 });
 
-test('getToolCallPresentation keeps file names visible when long paths are truncated', () => {
+test('getToolCallPresentation preserves the trailing path and file name when extremely long paths are truncated', () => {
   const presentation = getToolCallPresentation(makeToolCall({
     name: 'read',
     input: {
-      path: 'very/long/path/to/a/deeply/nested/location/with/more/segments/than/usual/docs/IDEAS.md',
+      path: [
+        'very',
+        'long',
+        'path',
+        'to',
+        'a',
+        'deeply',
+        'nested',
+        'location',
+        'with',
+        'more',
+        'segments',
+        'than',
+        'usual',
+        'and',
+        'even',
+        'more',
+        'segments',
+        'to',
+        'exercise',
+        'the',
+        'suffix',
+        'preserving',
+        'truncation',
+        'strategy',
+        'for',
+        'collapsed',
+        'transcript',
+        'tool',
+        'call',
+        'preview',
+        'layout',
+        'alignment',
+        'checks',
+        'inside',
+        'the',
+        'panel',
+        'docs',
+        'IDEAS.md',
+      ].join('/'),
     },
   }));
 
   assert.equal(presentation.name, 'read');
   assert.ok(presentation.summary?.startsWith('.../'));
+  assert.ok(!presentation.summary?.startsWith('very/long/path/to/'));
+  assert.ok(presentation.summary?.includes('/preview/layout/alignment/checks/inside/the/panel/docs/IDEAS.md'));
   assert.ok(presentation.summary?.endsWith('/IDEAS.md'));
+});
+
+test('getToolCallPresentation preserves Windows separators when long paths are truncated from the left', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: [
+        'C:',
+        'workspace',
+        'very',
+        'long',
+        'path',
+        'to',
+        'a',
+        'deeply',
+        'nested',
+        'location',
+        'with',
+        'more',
+        'segments',
+        'than',
+        'usual',
+        'and',
+        'even',
+        'more',
+        'segments',
+        'to',
+        'exercise',
+        'separator',
+        'preserving',
+        'truncation',
+        'strategy',
+        'for',
+        'collapsed',
+        'tool',
+        'call',
+        'preview',
+        'layout',
+        'alignment',
+        'verification',
+        'checks',
+        'inside',
+        'the',
+        'panel',
+        'docs',
+        'IDEAS.md',
+      ].join('\\'),
+    },
+  }));
+
+  assert.equal(presentation.name, 'read');
+  assert.ok(presentation.summary?.startsWith('...\\'));
+  assert.ok(presentation.summary?.includes('\\preview\\layout\\alignment\\verification\\checks\\inside\\the\\panel\\docs\\IDEAS.md'));
+  assert.ok(presentation.summary?.endsWith('\\IDEAS.md'));
 });
 
 test('getToolCallPresentation resolves read tool path inputs against cwd', () => {

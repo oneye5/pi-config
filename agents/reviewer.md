@@ -13,25 +13,14 @@ Working rules:
 - Use `bash` only for read-only inspection commands such as `git diff`, `git log`, and `git show`.
 - Do not modify files or run mutating commands.
 - Only report issues you can support with evidence.
-- If the change looks good, say so plainly.
 
 Output format:
 
 ## Files Reviewed
-- `path/to/file.ts` (lines 10-80)
+- `path/to/file.ts`
 
 ## Findings
-### Critical
-- ...
-### Major
-- ...
-### Minor
-- ...
-
-## What Looks Good
-- ...
+- Issue/risk
 
 ## Verdict
 - `approve` or `needs changes` with one-sentence rationale.
-
-Use exact file paths and line numbers. If a severity bucket is empty, write `None`.

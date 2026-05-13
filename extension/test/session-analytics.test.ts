@@ -87,3 +87,27 @@ test('buildSessionAnalyticsFactors hashes structured prompt, tool, and skill inp
     assert.deepEqual(factorsA.contextFiles.map((entry) => path.basename(entry.path)), ['PLAN.md', 'README.md']);
   });
 });
+
+test('buildSessionAnalyticsFactors collapses duplicate Windows context file paths that only differ by case', async () => {
+  const factors = await buildSessionAnalyticsFactors({
+    harnessPrompt: 'Harness prompt body',
+    promptOptions: {
+      cwd: 'd:/Projects/StandAloneProjects/pi-config',
+      contextFiles: [
+        {
+          path: 'D:\\Projects\\StandAloneProjects\\pi-config\\AGENTS.md',
+          content: 'Repo rules',
+        },
+        {
+          path: 'd:/Projects/StandAloneProjects/pi-config/AGENTS.md',
+          content: 'Duplicate repo rules',
+        },
+      ],
+      skills: [],
+    },
+  });
+
+  assert.equal(factors.contextFiles.length, 1);
+  assert.equal(factors.contextFiles[0]?.path, 'D:/Projects/StandAloneProjects/pi-config/AGENTS.md');
+  assert.equal(factors.contextFiles[0]?.hash.length, 64);
+});

@@ -107,7 +107,8 @@ export const NOOP_RUN_OBSERVER: RunObserver = {
 };
 
 export interface StatsServiceOptions {
-  globalStoragePath: string;
+  dataOutcomesRootPath: string;
+  legacyUsageDataRootPath?: string;
   workspaceId: string;
   scheduleRender?: () => void;
   dispatch?: StoreDispatch;
@@ -130,6 +131,8 @@ function emptySessionRunState(): SessionRunState {
 
 export class StatsService implements RunObserver {
   private readonly storageDir: string;
+  private readonly legacyStorageDir: string | null;
+  private readonly autoExportPath: string;
   private readonly scheduleRender: () => void;
   private readonly dispatch: StoreDispatch;
   private readonly getState: StoreGetState;
@@ -146,10 +149,17 @@ export class StatsService implements RunObserver {
 
   constructor(options: StatsServiceOptions) {
     this.storageDir = path.join(
-      options.globalStoragePath,
-      'runs',
+      options.dataOutcomesRootPath,
       workspaceHash(options.workspaceId),
     );
+    this.legacyStorageDir = options.legacyUsageDataRootPath
+      ? path.join(
+          options.legacyUsageDataRootPath,
+          'usage-data',
+          workspaceHash(options.workspaceId),
+        )
+      : null;
+    this.autoExportPath = path.join(this.storageDir, 'run-analytics.json');
     this.scheduleRender = options.scheduleRender ?? (() => undefined);
     this.dispatch = options.dispatch ?? appStore.dispatch;
     this.getState = options.getState ?? appStore.getState;
@@ -167,6 +177,7 @@ export class StatsService implements RunObserver {
     }
 
     this.startPromise = (async () => {
+      await this.migrateLegacyStorage();
       await fs.mkdir(this.storageDir, { recursive: true });
       const checkpoint = await this.readCheckpoint();
       this.seq = checkpoint?.seq ?? 0;
@@ -183,6 +194,7 @@ export class StatsService implements RunObserver {
         this.syncSessionSummary(sessionPath);
       }
 
+      await this.writeAutoExport();
       this.started = true;
       this.scheduleRender();
     })();
@@ -507,14 +519,26 @@ export class StatsService implements RunObserver {
 
   startNewTask(sessionPath: string): void {
     const state = this.getOrCreateSessionState(sessionPath);
+    if (state.nextTaskIntent === 'new_task') {
+      return;
+    }
+
     state.nextTaskIntent = 'new_task';
+    this.syncSessionSummary(sessionPath);
     this.schedulePersist();
+    this.scheduleRender();
   }
 
   continueTask(sessionPath: string): void {
     const state = this.getOrCreateSessionState(sessionPath);
+    if (state.nextTaskIntent === 'continue_task') {
+      return;
+    }
+
     state.nextTaskIntent = 'continue_task';
+    this.syncSessionSummary(sessionPath);
     this.schedulePersist();
+    this.scheduleRender();
   }
 
   onExperimentAssignmentChanged(assignment: string | null): void {
@@ -675,7 +699,10 @@ export class StatsService implements RunObserver {
 
   private syncSessionSummary(sessionPath: string): void {
     const state = this.sessions.get(sessionPath);
-    const summary = toActiveRunSummary(state?.currentRun ?? state?.lastRun ?? null);
+    const summary = toActiveRunSummary(
+      state?.currentRun ?? state?.lastRun ?? null,
+      state?.nextTaskIntent === 'new_task',
+    );
     this.dispatch(sessionStateActions.setActiveRunSummary({ sessionPath, summary }));
   }
 
@@ -767,6 +794,7 @@ export class StatsService implements RunObserver {
           );
         }
         await this.writeCheckpoint(checkpoint);
+        await this.writeAutoExport();
       });
   }
 
@@ -802,6 +830,28 @@ export class StatsService implements RunObserver {
 
   private async writeCheckpoint(checkpoint: RunCheckpoint): Promise<void> {
     this.activeSlot = await writeCheckpointToDisk(this.storageDir, this.activeSlot, checkpoint);
+  }
+
+  private async migrateLegacyStorage(): Promise<void> {
+    if (!this.legacyStorageDir || this.legacyStorageDir === this.storageDir) {
+      return;
+    }
+
+    try {
+      await fs.cp(this.legacyStorageDir, this.storageDir, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  private async writeAutoExport(): Promise<void> {
+    await exportRunAnalyticsStore(this.storageDir, this.autoExportPath, this.now);
   }
 
   private isoNow(): string {

@@ -44,16 +44,26 @@ export function summarizeInputs(run: RunSnapshot, inputs: ComposerInput[]): void
   run.inputKindsUsed = [...kindsUsed];
 }
 
-export function toActiveRunSummary(run: RunSnapshot | null): ActiveRunSummary | null {
+export function toActiveRunSummary(
+  run: RunSnapshot | null,
+  nextSendStartsNewTask = false,
+): ActiveRunSummary | null {
   if (!run) {
     return null;
   }
 
-  return {
-    runId: run.runId,
-    status: run.status,
-    scored: run.scored,
-  };
+  return nextSendStartsNewTask
+    ? {
+        runId: run.runId,
+        status: run.status,
+        scored: run.scored,
+        nextSendStartsNewTask: true,
+      }
+    : {
+        runId: run.runId,
+        status: run.status,
+        scored: run.scored,
+      };
 }
 
 interface PersistableSessionState {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  COMPOSER_MARK_DONE_ACTION,
+  getComposerRunControls,
   getSessionTabRunBadge,
   getSessionTabRunMenuItems,
 } from '../src/webview/panel/session-tab-run-state';
@@ -44,13 +46,72 @@ test('getSessionTabRunMenuItems returns no actions when there is no active run',
   assert.deepEqual(getSessionTabRunMenuItems(null), []);
 });
 
+test('getComposerRunControls returns a completion action for open runs', () => {
+  const controls = getComposerRunControls({
+    runId: 'run-open-toolbar',
+    status: 'open',
+    scored: false,
+  });
+
+  assert.deepEqual(controls, {
+    status: null,
+    action: COMPOSER_MARK_DONE_ACTION,
+  });
+  assert.strictEqual(controls.action, COMPOSER_MARK_DONE_ACTION);
+});
+
+test('getComposerRunControls keeps the mark-done action available for closed unscored runs', () => {
+  const controls = getComposerRunControls({
+    runId: 'run-needs-rating',
+    status: 'closed_unscored',
+    scored: false,
+  });
+
+  assert.deepEqual(controls, {
+    status: null,
+    action: COMPOSER_MARK_DONE_ACTION,
+  });
+  assert.strictEqual(controls.action, COMPOSER_MARK_DONE_ACTION);
+});
+
+test('getComposerRunControls returns outcome-saved status after a run is scored', () => {
+  assert.deepEqual(getComposerRunControls({
+    runId: 'run-complete',
+    status: 'scored',
+    scored: true,
+  }), {
+    status: {
+      text: 'Outcome saved',
+      tone: 'subtle',
+      title: 'Local outcome saved. Send another message to continue this task, or queue a new one.',
+    },
+    action: null,
+  });
+});
+
+test('getComposerRunControls surfaces queued new-task state', () => {
+  assert.deepEqual(getComposerRunControls({
+    runId: 'run-queued',
+    status: 'scored',
+    scored: true,
+    nextSendStartsNewTask: true,
+  }), {
+    status: {
+      text: 'New task queued',
+      tone: 'subtle',
+      title: 'The next send will start a new task group instead of continuing the completed one.',
+    },
+    action: null,
+  });
+});
+
 test('getSessionTabRunBadge highlights open and unrated runs', () => {
   assert.deepEqual(getSessionTabRunBadge({
     runId: 'run-open',
     status: 'open',
     scored: false,
   }), {
-    text: 'Done…',
+    text: 'Done',
     tone: 'open',
     title: 'Click to mark this run complete and record a rating. You can also right-click the tab for task actions.',
   });
@@ -60,7 +121,7 @@ test('getSessionTabRunBadge highlights open and unrated runs', () => {
     status: 'closed_unscored',
     scored: false,
   }), {
-    text: 'Rate…',
+    text: 'Rate',
     tone: 'pending-score',
     title: 'Click to record the outcome for this completed run. You can also right-click the tab for task actions.',
   });

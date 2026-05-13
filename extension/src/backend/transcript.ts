@@ -1,4 +1,3 @@
-import { NEW_SESSION_NAME } from '../shared/session-name';
 import type {
   ChatMessage,
   ChatMessagePart,
@@ -7,6 +6,8 @@ import type {
   ToolCall,
   UserContentPart,
 } from '../shared/protocol';
+import { NEW_SESSION_NAME } from '../shared/session-name';
+import { formatToolResult } from '../shared/tool-result-format';
 
 type MessageRole =
   | 'user'
@@ -278,19 +279,6 @@ function applyToolResultToParts(
 
   part.toolCall.result = result;
   part.toolCall.status = status;
-}
-
-function formatToolResult(message: MessageLike): unknown {
-  if (message.details !== undefined) {
-    return message.details;
-  }
-
-  if (Array.isArray(message.content)) {
-    const text = textFromParts(message.content);
-    return text || message.content;
-  }
-
-  return message.content ?? null;
 }
 
 function assistantStatus(message: MessageLike): ChatMessage['status'] {

@@ -51,10 +51,14 @@ import {
   type SdkSession,
   type SdkSessionEvent,
   type SdkSessionManager,
-  type SdkSkill,
   type SdkSystemPromptModule,
 } from './sdk';
+import { prepareContextFiles } from './context-files';
 import { buildSessionAnalyticsFactors } from './session-analytics';
+import {
+  buildSessionSystemPrompts,
+  normalizePromptText,
+} from './system-prompts';
 import { mapAssistantMessage, mapTranscript, summarizeSession, type SessionEntryLike } from './transcript';
 
 interface ActiveRequest {
@@ -102,21 +106,6 @@ function responseError(id: string, code: string, message: string, data?: unknown
   return { id, ok: false, error: { code, message, data } };
 }
 
-function summarizePrompt(text: string): string {
-  const stripped = text
-    .replace(/\*\*?(.*?)\*\*?/g, '$1')
-    .replace(/`{1,3}[^`]*`{1,3}/g, '')
-    .replace(/#{1,6}\s+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return stripped.length > 80 ? stripped.slice(0, 80) + '...' : stripped;
-}
-
-function normalizePromptText(text: string | undefined): string | undefined {
-  const trimmed = text?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 function normalizeThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
   switch (value) {
     case 'off':
@@ -129,10 +118,6 @@ function normalizeThinkingLevel(value: string | undefined): ThinkingLevel | unde
     default:
       return undefined;
   }
-}
-
-function toDisplayPath(filePath: string): string {
-  return filePath.replace(/\\/g, '/');
 }
 
 function normalizeModelInputKinds(value: unknown): ModelInputKind[] | null {
@@ -184,14 +169,6 @@ function buildPromptText(text: string, inputs: ComposerInput[]): string {
   return sections.join('\n\n');
 }
 
-const PROVIDER_SYSTEM_PROMPT: SystemPromptEntry = {
-  source: 'provider',
-  title: 'Provider system prompt',
-  summary: 'Unknown',
-  text: 'Unknown.\n\nThe upstream GitHub Copilot provider prompt is not exposed to this extension.',
-  availability: 'unknown',
-};
-
 interface SessionPromptState {
   _baseSystemPrompt?: string;
   _baseSystemPromptOptions?: SdkBuildSystemPromptOptions;
@@ -240,7 +217,14 @@ export class BackendServer {
         cwd,
         agentDir,
         authStorage: this.authStorage,
-        resourceLoaderOptions: {},
+        resourceLoaderOptions: {
+          agentsFilesOverride: (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
+            agentsFiles: prepareContextFiles(base.agentsFiles).map((contextFile) => ({
+              path: contextFile.path,
+              content: contextFile.content,
+            })),
+          }),
+        },
       })) as Record<string, unknown>;
 
       const created = (await this.sdk.createAgentSessionFromServices({
@@ -508,87 +492,18 @@ export class BackendServer {
     }
   }
 
-  private buildUserPromptSections(options?: SdkBuildSystemPromptOptions): string | undefined {
-    if (!options) {
-      return undefined;
-    }
-
-    const sections: string[] = [];
-    const customPrompt = normalizePromptText(options.customPrompt);
-    if (customPrompt) {
-      sections.push(`## System prompt override\n\n${customPrompt}`);
-    }
-
-    const appendSystemPrompt = normalizePromptText(options.appendSystemPrompt);
-    if (appendSystemPrompt) {
-      sections.push(`## Appended system prompt\n\n${appendSystemPrompt}`);
-    }
-
-    for (const contextFile of options.contextFiles ?? []) {
-      const content = normalizePromptText(contextFile.content);
-      if (!content) {
-        continue;
-      }
-      sections.push(`## ${toDisplayPath(contextFile.path)}\n\n${content}`);
-    }
-
-    if (typeof this.sdk.formatSkillsForPrompt === 'function' && (options.skills?.length ?? 0) > 0) {
-      const formattedSkills = normalizePromptText(this.sdk.formatSkillsForPrompt(options.skills as SdkSkill[]));
-      if (formattedSkills) {
-        sections.push(`## Skills\n\n${formattedSkills}`);
-      }
-    }
-
-    return sections.length > 0 ? sections.join('\n\n---\n\n') : undefined;
-  }
-
   private async buildSystemPrompts(
     context: SessionContext,
     harnessPromptOverride?: string,
   ): Promise<SystemPromptEntry[]> {
     const promptState = this.getSessionPromptState(context);
-    const userPrompt = this.buildUserPromptSections(promptState._baseSystemPromptOptions);
     const harnessPrompt = harnessPromptOverride ?? await this.readHarnessSystemPrompt(context);
 
-    const entries: SystemPromptEntry[] = [PROVIDER_SYSTEM_PROMPT];
-
-    entries.push(
-      harnessPrompt
-        ? {
-            source: 'harness',
-            title: 'Harness system prompt',
-            summary: summarizePrompt(harnessPrompt),
-            text: harnessPrompt,
-            availability: 'available',
-          }
-        : {
-            source: 'harness',
-            title: 'Harness system prompt',
-            summary: 'Unavailable',
-            text: 'The PI harness prompt could not be reconstructed for this session.',
-            availability: 'missing',
-          },
-    );
-
-    entries.push(
-      userPrompt
-        ? {
-            source: 'user',
-            title: 'User system prompt',
-            summary: summarizePrompt(userPrompt),
-            text: userPrompt,
-            availability: 'available',
-          }
-        : {
-            source: 'user',
-            title: 'User system prompt',
-            summary: 'None configured',
-            text: 'No user-controlled system prompt content is configured for this session.',
-            availability: 'missing',
-          },
-    );
-
-    return entries;
+    return buildSessionSystemPrompts({
+      harnessPrompt,
+      promptOptions: promptState._baseSystemPromptOptions,
+      formatSkillsForPrompt: this.sdk.formatSkillsForPrompt,
+    });
   }
 
   private async readModelSettings(): Promise<ModelSettings> {

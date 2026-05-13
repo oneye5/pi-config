@@ -18,11 +18,7 @@ import type {
 import { CHAT_PREF_MENU_SECTIONS, toggleChatPref } from './chat-prefs';
 import { buildContextWindowBreakdown } from './context-window-breakdown';
 import { buildContextWindowIndicatorState } from './context-window-indicator';
-import {
-  describeImagePasteAffordance,
-  describeRunAnalyticsStatus,
-  shouldHandleGlobalComposerPaste,
-} from './composer-affordances';
+import { shouldHandleGlobalComposerPaste } from './composer-affordances';
 import { resolveComposerModelState } from './composer-model-state';
 import {
   canAcceptComposerTransfer,
@@ -30,7 +26,13 @@ import {
   formatComposerTransferError,
   hasClipboardFilePayload,
 } from './file-drop';
-import { getSessionTabRunBadge } from './session-tab-run-state';
+import {
+  composerInputDetail,
+  composerInputDisplayName,
+  composerInputTitle,
+  describeComposerInputSummary,
+} from './composer-inputs';
+import { getComposerRunControls } from './session-tab-run-state';
 export { SessionTabs } from './session-tabs';
 
 // ─── Composer ────────────────────────────────────────────────────────────────
@@ -141,35 +143,20 @@ interface ComposerProps {
   systemPrompts: SystemPromptEntry[];
   transcript: ChatMessage[];
   pendingComposerInputs: ComposerInput[];
-  activeRunSummary: ActiveRunSummary | null;
+  activeRunSummary?: ActiveRunSummary | null;
   focusTrigger?: string;
   onSend: (text: string) => void;
   onInterrupt: () => void;
   onOpenFilePicker: () => void;
   onAddInput: (input: ComposerInputDraft) => void;
   onRemoveInput: (inputId: string) => void;
-  onRecordOutcome: () => void;
-  onExportRunAnalytics: () => void;
   onModelChange: (model: string, thinkingLevel: ThinkingLevel) => void;
   onSetPrefs: (prefs: Partial<ChatPrefs>) => void;
-}
-
-function composerInputDisplayName(input: ComposerInput): string {
-  if (input.kind === 'filesystemPathRef') {
-    return input.name || input.path.split(/[\\/]/).pop() || input.path;
-  }
-
-  return input.name || 'image';
+  onMarkComplete?: () => void;
 }
 
 function imagePreviewSrc(input: Extract<ComposerInput, { kind: 'imageBlob' }>): string {
   return `data:${input.mimeType};base64,${input.dataBase64}`;
-}
-
-function formatImageMeta(input: Extract<ComposerInput, { kind: 'imageBlob' }>): string {
-  const dimensions = input.width && input.height ? `${input.width}×${input.height}` : null;
-  const sizeKb = Math.max(1, Math.round(input.sizeBytes / 1024));
-  return [dimensions, `${sizeKb} KB`].filter(Boolean).join(' · ');
 }
 
 export function Composer({
@@ -191,10 +178,9 @@ export function Composer({
   onOpenFilePicker,
   onAddInput,
   onRemoveInput,
-  onRecordOutcome,
-  onExportRunAnalytics,
   onModelChange,
   onSetPrefs,
+  onMarkComplete,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [isDragActive, setIsDragActive] = useState(false);
@@ -244,6 +230,9 @@ export function Composer({
     availableModels,
   });
   const supportsImageInputs = selectedModelInfo?.inputKinds.includes('image') ?? false;
+  const runControls = getComposerRunControls(activeRunSummary ?? null);
+  const hasUserMessages = transcript.some((msg) => msg.role === 'user');
+  const completionAction = runControls.action;
 
   const applyComposerTransfer = useCallback(async (dataTransfer: DataTransfer | null, source: 'drop' | 'paste') => {
     const { inputs, unsupportedInputs, rejectedFiles } = await extractComposerInputs(dataTransfer, source);
@@ -366,15 +355,12 @@ export function Composer({
     ? buildContextWindowIndicatorState(contextBreakdown.summary)
     : null;
   const contextIndicatorClass = contextIndicator?.severity ? ` ${contextIndicator.severity}` : '';
-  const runBadge = getSessionTabRunBadge(activeRunSummary);
-  const runAnalyticsStatus = describeRunAnalyticsStatus(activeRunSummary);
-  const imagePasteAffordance = describeImagePasteAffordance(supportsImageInputs);
   const canSend = text.trim().length > 0 || pendingComposerInputs.length > 0;
+  const attachmentSummary = describeComposerInputSummary(pendingComposerInputs);
+  const showAttachmentSummary = pendingComposerInputs.length > 1;
   const composerPlaceholder = busy
     ? 'Waiting for a response...'
-    : supportsImageInputs
-      ? 'Ask PI anything… Paste screenshots or drop files to attach them.'
-      : 'Ask PI anything...';
+    : 'Ask PI anything...';
 
   return (
     <div class="composer-area">
@@ -429,89 +415,19 @@ export function Composer({
             </span>
           </div>
         )}
-      </div>
 
-      <div class="composer-meta">
-        <div class="composer-meta-group">
-          <span
-            class="composer-meta-chip subtle"
-            title="Run analytics stay local and start automatically when you send a message."
-          >
-            {runAnalyticsStatus}
-          </span>
-          {runBadge && (
-            <button
-              class={`composer-meta-chip action ${runBadge.tone}`}
-              type="button"
-              title={runBadge.title}
-              onClick={onRecordOutcome}
+        {runControls.status && (
+          <div class="composer-run-controls">
+            <span
+              class={`composer-meta-chip ${runControls.status.tone}`}
+              title={runControls.status.title}
             >
-              {runBadge.text}
-            </button>
-          )}
-          <button
-            class="composer-meta-chip action"
-            type="button"
-            title="Export local run analytics as JSON"
-            onClick={onExportRunAnalytics}
-          >
-            Export JSON
-          </button>
-        </div>
-        <div class="composer-meta-group">
-          <span
-            class={`composer-meta-chip ${supportsImageInputs ? 'subtle' : 'warning'}`}
-            title={supportsImageInputs
-              ? 'Focus the pie panel and press Ctrl+V / Cmd+V to attach a screenshot or image.'
-              : 'Switch to an image-capable model to paste screenshots or images.'}
-          >
-            {imagePasteAffordance}
-          </span>
-        </div>
+              {runControls.status.text}
+            </span>
+          </div>
+        )}
+
       </div>
-
-      {pendingComposerInputs.length > 0 && (
-        <div class="composer-attachments">
-          <span class="composer-section-label">Attached</span>
-          {pendingComposerInputs.map((input) => {
-            if (input.kind === 'imageBlob') {
-              return (
-                <div key={input.id} class="attachment-preview" title={composerInputDisplayName(input)}>
-                  <div class="attachment-preview-frame">
-                    <img class="attachment-preview-image" src={imagePreviewSrc(input)} alt={composerInputDisplayName(input)} />
-                    <button
-                      class="attachment-preview-remove"
-                      type="button"
-                      onClick={() => onRemoveInput(input.id)}
-                      aria-label={`Remove ${composerInputDisplayName(input)}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <div class="attachment-preview-meta">
-                    <span class="attachment-preview-name">{composerInputDisplayName(input)}</span>
-                    <span class="attachment-preview-detail">{formatImageMeta(input)}</span>
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <span key={input.id} class="attachment-chip" title={input.kind === 'filesystemPathRef' ? input.path : composerInputDisplayName(input)}>
-                <span class="attachment-chip-name">{composerInputDisplayName(input)}</span>
-                <button
-                  class="attachment-chip-remove"
-                  type="button"
-                  onClick={() => onRemoveInput(input.id)}
-                  aria-label={`Remove ${composerInputDisplayName(input)}`}
-                >
-                  ×
-                </button>
-              </span>
-            );
-          })}
-        </div>
-      )}
 
       <div
         ref={composerShellRef}
@@ -520,6 +436,48 @@ export function Composer({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        {pendingComposerInputs.length > 0 && (
+          <div class="composer-attachments" role="group" aria-label={`Pending attachments: ${attachmentSummary}`}>
+            {showAttachmentSummary && <span class="composer-attachments-summary">{attachmentSummary}</span>}
+            <div class="composer-attachments-strip">
+              {pendingComposerInputs.map((input) => {
+                const displayName = composerInputDisplayName(input);
+                const detail = composerInputDetail(input);
+
+                return (
+                  <div key={input.id} class="attachment-card" title={composerInputTitle(input)}>
+                    {input.kind === 'imageBlob' ? (
+                      <div class="attachment-card-thumb">
+                        <img class="attachment-card-image" src={imagePreviewSrc(input)} alt={displayName} />
+                      </div>
+                    ) : (
+                      <div class="attachment-card-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 3v5h5" />
+                          <path d="M9 13h6" />
+                          <path d="M9 17h4" />
+                        </svg>
+                      </div>
+                    )}
+                    <div class="attachment-card-meta">
+                      <span class="attachment-card-name">{displayName}</span>
+                      <span class="attachment-card-detail">{detail}</span>
+                    </div>
+                    <button
+                      class="attachment-card-remove"
+                      type="button"
+                      onClick={() => onRemoveInput(input.id)}
+                      aria-label={`Remove ${displayName}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           class="composer-textarea"
@@ -543,6 +501,18 @@ export function Composer({
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>
+          {completionAction && (
+            <button
+              class={`composer-run-action ${completionAction.tone}`}
+              type="button"
+              title={completionAction.title}
+              aria-label={completionAction.ariaLabel}
+              disabled={busy || !hasUserMessages || !onMarkComplete}
+              onClick={() => onMarkComplete?.()}
+            >
+              {completionAction.text}
+            </button>
+          )}
           {busy ? (
             <button
               class="action-btn danger"

@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 
 import type { SessionAnalyticsFactors } from '../shared/protocol';
+import { prepareContextFiles } from './context-files';
 import type { SdkBuildSystemPromptOptions, SdkSkill } from './sdk';
 
 function normalizeHashInput(text: string | undefined): string | null {
@@ -15,10 +16,6 @@ function normalizeHashInput(text: string | undefined): string | null {
 
 function sha256Hex(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
-}
-
-function toDisplayPath(filePath: string): string {
-  return filePath.replace(/\\/g, '/');
 }
 
 function stableJson(value: unknown): string {
@@ -121,9 +118,9 @@ export async function buildSessionAnalyticsFactors(options: {
       .map((guideline) => hashOptionalText(guideline) ?? '')
       .filter((hash) => hash.length > 0),
   )].sort();
-  const contextFiles = (promptOptions?.contextFiles ?? [])
+  const contextFiles = prepareContextFiles(promptOptions?.contextFiles)
     .map((contextFile) => ({
-      path: toDisplayPath(contextFile.path),
+      path: contextFile.path,
       hash: hashOptionalText(contextFile.content) ?? '',
     }))
     .filter((contextFile) => contextFile.path.length > 0 && contextFile.hash.length > 0)

@@ -3,14 +3,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 
-import type { ActiveRunSummary, SessionSummary } from '../../shared/protocol';
+import type { SessionSummary } from '../../shared/protocol';
 import { getHorizontalDropIndex } from '../../shared/tab-behavior';
-import {
-  getSessionTabRunBadge,
-  getSessionTabRunMenuItems,
-  type SessionTabRunAction,
-  type SessionTabRunMenuItem,
-} from './session-tab-run-state';
 
 const TAB_DRAG_THRESHOLD_PX = 6;
 const TAB_DRAG_EDGE_SCROLL_PX = 40;
@@ -23,15 +17,11 @@ interface SessionTabsProps {
   runningSessionPaths: string[];
   unreadFinishedSessionPaths: string[];
   activeSession: SessionSummary | null;
-  runSummariesBySession: Record<string, ActiveRunSummary | null>;
   backendReady: boolean;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
   onMove: (sessionPath: string | undefined, fromIndex: number, toIndex: number) => void;
   onNew: () => void;
-  onRecordOutcome: (sessionPath: string) => void;
-  onStartNewTask: (sessionPath: string) => void;
-  onContinueTask: (sessionPath: string) => void;
 }
 
 type TabDragCandidate = {
@@ -59,83 +49,17 @@ type SessionTabDragState = {
   dropIndex: number | null;
 };
 
-interface SessionTabContextMenuState {
-  x: number;
-  y: number;
-  sessionPath: string;
-  label: string;
-  items: SessionTabRunMenuItem[];
-}
-
-function SessionTabContextMenu({
-  menu,
-  onSelectAction,
-  onClose,
-}: {
-  menu: SessionTabContextMenuState;
-  onSelectAction: (action: SessionTabRunAction, sessionPath: string) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onClose]);
-
-  const style = `position:fixed;top:${Math.min(menu.y, window.innerHeight - 160)}px;left:${Math.min(menu.x, window.innerWidth - 220)}px`;
-
-  return (
-    <div ref={ref} class="block-context-menu session-tab-context-menu" style={style} onMouseDown={(event) => event.stopPropagation()}>
-      <div class="session-tab-context-title" title={menu.label}>{menu.label}</div>
-      {menu.items.map((item) => (
-        <button
-          key={item.action}
-          class="context-menu-item"
-          type="button"
-          onClick={() => {
-            onSelectAction(item.action, menu.sessionPath);
-            onClose();
-          }}
-        >
-          <svg class="context-menu-check" width="13" height="13" viewBox="0 0 13 13" aria-hidden="true" style="opacity:0" />
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function SessionTabs({
   sessions,
   openTabPaths,
   runningSessionPaths,
   unreadFinishedSessionPaths,
   activeSession,
-  runSummariesBySession,
   backendReady,
   onSelect,
   onClose,
   onMove,
   onNew,
-  onRecordOutcome,
-  onStartNewTask,
-  onContinueTask,
 }: SessionTabsProps) {
   const stripRef = useRef<HTMLDivElement>(null);
   const openTabPathsRef = useRef(openTabPaths);
@@ -151,7 +75,6 @@ export function SessionTabs({
   const windowBlurHandlerRef = useRef<() => void>(() => undefined);
   const autoScrollTickRef = useRef<() => void>(() => undefined);
   const [dragState, setDragState] = useState<SessionTabDragState | null>(null);
-  const [contextMenu, setContextMenu] = useState<SessionTabContextMenuState | null>(null);
 
   openTabPathsRef.current = openTabPaths;
 
@@ -295,22 +218,6 @@ export function SessionTabs({
     resetDrag(true);
   }, [onMove, resetDrag]);
 
-  const handleRunAction = useCallback((action: SessionTabRunAction, sessionPath: string) => {
-    switch (action) {
-      case 'recordOutcome':
-        onRecordOutcome(sessionPath);
-        return;
-      case 'startNewTask':
-        onStartNewTask(sessionPath);
-        return;
-      case 'continueTask':
-        onContinueTask(sessionPath);
-        return;
-      default:
-        return;
-    }
-  }, [onContinueTask, onRecordOutcome, onStartNewTask]);
-
   autoScrollTickRef.current = () => {
     const drag = dragStateRef.current;
     const pointer = pointerPositionRef.current;
@@ -430,10 +337,6 @@ export function SessionTabs({
   }, [endTracking]);
 
   useEffect(() => {
-    setContextMenu(null);
-  }, [activeSession?.path, runSummariesBySession]);
-
-  useEffect(() => {
     if (!dragStateRef.current || !pointerPositionRef.current) {
       return;
     }
@@ -486,25 +389,8 @@ export function SessionTabs({
     if (suppressNextClickRef.current) {
       return;
     }
-    setContextMenu(null);
     onSelect(tabPath);
   }, [onSelect]);
-
-  const handleTabContextMenu = useCallback((tabPath: string, label: string, event: MouseEvent) => {
-    const items = getSessionTabRunMenuItems(runSummariesBySession[tabPath] ?? null);
-    if (items.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      sessionPath: tabPath,
-      label,
-      items,
-    });
-  }, [runSummariesBySession]);
 
   const draggedSourceIndex = dragState ? Math.min(dragState.sourceIndex, openTabPaths.length - 1) : -1;
   const draggedPath = draggedSourceIndex >= 0 ? (openTabPaths[draggedSourceIndex] ?? dragState?.sourcePath ?? null) : null;
@@ -540,13 +426,6 @@ export function SessionTabs({
 
   return (
     <div class={`session-tabs${dragState ? ' dragging' : ''}`}>
-      {contextMenu && (
-        <SessionTabContextMenu
-          menu={contextMenu}
-          onSelectAction={handleRunAction}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
       <div ref={stripRef} class="session-tabs-strip" role="tablist" aria-label="Sessions">
         {renderedTabPaths.map((tabPath, index) => {
           const session = sessionByPath.get(tabPath);
@@ -554,14 +433,8 @@ export function SessionTabs({
           const isActive = activeSession?.path === tabPath;
           const isRunning = runningPathSet.has(tabPath);
           const isUnreadFinished = unreadFinishedPathSet.has(tabPath);
-          const runSummary = runSummariesBySession[tabPath] ?? null;
-          const runBadge = getSessionTabRunBadge(runSummary);
           const originalIndex = openIndexByPath.get(tabPath) ?? index;
-          const titleParts = [isUnreadFinished ? `${label} (finished, unread)` : label];
-          if (runBadge) {
-            titleParts.push(runBadge.title);
-          }
-          const title = titleParts.join(' — ');
+          const title = isUnreadFinished ? `${label} (finished, unread)` : label;
 
           return [
             renderDropGap(index),
@@ -569,8 +442,8 @@ export function SessionTabs({
               key={tabPath}
               class={`session-tab${isActive ? ' active' : ''}${isUnreadFinished ? ' unread-finished' : ''}`}
               data-drop-target-tab="true"
-              onContextMenu={(event) => handleTabContextMenu(tabPath, label, event as unknown as MouseEvent)}
             >
+              <span class="session-tab-shell" aria-hidden="true" />
               <button
                 class="session-tab-main"
                 type="button"
@@ -587,20 +460,6 @@ export function SessionTabs({
                     : null}
                 <span class="session-tab-label">{label}</span>
               </button>
-              {runBadge && (
-                <button
-                  class={`session-tab-run-badge ${runBadge.tone}`}
-                  type="button"
-                  title={runBadge.title}
-                  aria-label={runBadge.title}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRecordOutcome(tabPath);
-                  }}
-                >
-                  {runBadge.text}
-                </button>
-              )}
               <button
                 class="session-tab-close"
                 type="button"
@@ -636,6 +495,7 @@ export function SessionTabs({
           }}
           aria-hidden="true"
         >
+          <span class="session-tab-shell" aria-hidden="true" />
           <div class="session-tab-main">
             {floatingRunning && <span class="session-tab-running" aria-hidden="true" />}
             <span class="session-tab-label">{floatingLabel}</span>

@@ -53,10 +53,6 @@
       {
         "command": "pie.restartBackend",
         "title": "pie: Restart Backend"
-      },
-      {
-        "command": "pie.exportRunAnalytics",
-        "title": "pie: Export Run Analytics"
       }
     ],
     "menus": {

@@ -2,13 +2,11 @@ import type {
   ChatMessage,
   ContextWindowUsage,
   SystemPromptEntry,
-  SystemPromptSource,
   ToolCall,
 } from '../../shared/protocol';
 import { estimateTextTokens } from './system-prompt-tokens';
 
 const readableTokenFormatter = new Intl.NumberFormat('en-US');
-const SYSTEM_PROMPT_SOURCES: readonly SystemPromptSource[] = ['provider', 'harness', 'user'];
 const MAX_TOOLTIP_ENTRIES = 6;
 
 export type ContextWindowBreakdownKind = 'exact' | 'estimated' | 'derived' | 'unknown';
@@ -154,14 +152,14 @@ function buildContributors(
   let otherEstimated = 0;
   let index = 0;
 
-  // System prompts — combine all available sources into one entry.
-  let systemPromptTokens = 0;
-  for (const source of SYSTEM_PROMPT_SOURCES) {
-    const prompt = systemPrompts.find((p) => p.source === source);
-    if (prompt?.availability === 'available') {
-      systemPromptTokens += estimateTextTokens(prompt.text);
+  // System prompts — combine all available prompt cards into one entry.
+  const systemPromptTokens = systemPrompts.reduce((total, prompt) => {
+    if (prompt.availability !== 'available') {
+      return total;
     }
-  }
+
+    return total + estimateTextTokens(prompt.text);
+  }, 0);
   if (systemPromptTokens > 0) {
     items.push({ label: 'System prompt', tokens: systemPromptTokens, originalIndex: index++ });
   }

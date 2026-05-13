@@ -10,22 +10,12 @@ const RESOLUTION_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  {
-    value: 'resolved',
-    label: 'Resolved',
-    description: 'The task was completed successfully.',
-  },
-  {
-    value: 'partially_resolved',
-    label: 'Partially resolved',
-    description: 'Some progress was made, but follow-up work is still needed.',
-  },
-  {
-    value: 'unresolved',
-    label: 'Unresolved',
-    description: 'The task did not land in a usable state yet.',
-  },
+  { value: 'resolved', label: 'Resolved', description: 'Completed successfully.' },
+  { value: 'partially_resolved', label: 'Partially resolved', description: 'Progress made, follow-up still needed.' },
+  { value: 'unresolved', label: 'Unresolved', description: 'Did not land in a usable state.' },
 ];
+
+export type RunOutcomeDialogMode = 'complete';
 
 interface RunOutcomeDialogProps {
   sessionLabel: string;
@@ -37,6 +27,7 @@ export function RunOutcomeDialog({ sessionLabel, onCancel, onSubmit }: RunOutcom
   const [resolution, setResolution] = useState<RunOutcomeResolution>('resolved');
   const [satisfaction, setSatisfaction] = useState<number | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const title = `Mark "${sessionLabel}" done`;
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -80,10 +71,7 @@ export function RunOutcomeDialog({ sessionLabel, onCancel, onSubmit }: RunOutcom
       >
         <div class="run-outcome-header">
           <div class="run-outcome-eyebrow">Run analytics</div>
-          <h2 id="run-outcome-title" class="run-outcome-title">Mark “{sessionLabel}” complete</h2>
-          <p class="run-outcome-subtitle">
-            Save a local outcome for this run. Choose a 1–5 rating, then confirm whether the task was resolved.
-          </p>
+          <h2 id="run-outcome-title" class="run-outcome-title">{title}</h2>
         </div>
 
         <div class="run-outcome-section">

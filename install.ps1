@@ -8,7 +8,7 @@
   2. Migrates auth.json from the old default location (~/.pi/agent/) if it exists and
      no auth.json is already present in this repo.
   3. Migrates or merges legacy session history from the old default location
-     (~/.pi/agent/sessions/) into this checkout's local git-ignored session store,
+     (~/.pi/agent/sessions/) into this checkout's local git-ignored data/outcomes/sessions store,
      preserving conflicting copies in backup files when the source and destination differ.
   4. Validates Node.js and npm, then restores PI packages when the `pi` CLI is available.
   5. Runs `pi update` to reinstall any packages listed in settings.json.
@@ -209,9 +209,10 @@ if ((Test-Path $oldAuth) -and -not (Test-Path $newAuth)) {
 }
 
 # Migrate local session history from legacy locations if needed
-$newSessions = Join-Path $repoRoot 'sessions'
+$outcomesRoot = Join-Path $repoRoot 'data\outcomes'
+$newSessions = Join-Path $outcomesRoot 'sessions'
 $legacySessionImports = @()
-$sessionDirSettingOverrideActive = $false
+$desiredSessionDir = 'data/outcomes/sessions'
 $defaultLegacySessions = Join-Path $env:USERPROFILE '.pi\agent\sessions'
 if (Test-DirectoryHasJsonlFiles $defaultLegacySessions) {
   $legacySessionImports += @{ source = $defaultLegacySessions; recurse = $true }
@@ -226,26 +227,31 @@ if (Test-Path $settingsPath) {
       $configuredSessionDir = [string]$sessionDirProperty.Value
       $resolvedConfiguredSessionDir = Resolve-ConfiguredSessionDir $configuredSessionDir
       $configuredSessionDirExists = $resolvedConfiguredSessionDir -and (Test-Path $resolvedConfiguredSessionDir -PathType Container)
-      if (-not $resolvedConfiguredSessionDir) {
-        $sessionDirSettingOverrideActive = $true
-        Write-Warning "Leaving sessionDir override '$configuredSessionDir' in place because relative sessionDir values cannot be repaired safely by the installer."
-      } elseif (-not $configuredSessionDirExists) {
-        $sessionDirSettingOverrideActive = $true
-        Write-Warning "Leaving sessionDir override '$configuredSessionDir' in place because '$resolvedConfiguredSessionDir' is not currently available."
-      } else {
+      if ($configuredSessionDir -ne $desiredSessionDir) {
         $settingsBackupPath = "$settingsPath.session-dir.$([guid]::NewGuid().ToString('N')).bak"
         Copy-Item -LiteralPath $settingsPath -Destination $settingsBackupPath
-        $settings.PSObject.Properties.Remove('sessionDir')
+        $settings.sessionDir = $desiredSessionDir
         Write-Utf8NoBomFile $settingsPath ($settings | ConvertTo-Json -Depth 100)
-        Write-Host "==> Removed sessionDir override from settings.json so PI uses this checkout's local sessions directory"
+        Write-Host "==> Updated sessionDir in settings.json to '$desiredSessionDir'"
         Write-Host "==> Backed up the previous settings.json to '$settingsBackupPath'"
-        if (Test-DirectoryHasJsonlFiles $resolvedConfiguredSessionDir $false) {
+        if ($configuredSessionDirExists -and $resolvedConfiguredSessionDir -ne $newSessions) {
           $legacySessionImports += @{ source = $resolvedConfiguredSessionDir; recurse = $false }
           Write-Host "==> Will import legacy session history from configured sessionDir '$resolvedConfiguredSessionDir'"
+        } elseif ($resolvedConfiguredSessionDir -and $resolvedConfiguredSessionDir -eq $newSessions) {
+          Write-Host "==> sessionDir already points at '$desiredSessionDir'"
+        } elseif (-not $resolvedConfiguredSessionDir) {
+          Write-Warning "The previous sessionDir value '$configuredSessionDir' could not be resolved safely, so it was replaced with '$desiredSessionDir'."
         } else {
           Write-Host "==> configured sessionDir '$resolvedConfiguredSessionDir' has no session files to import"
         }
       }
+    } else {
+      $settingsBackupPath = "$settingsPath.session-dir.$([guid]::NewGuid().ToString('N')).bak"
+      Copy-Item -LiteralPath $settingsPath -Destination $settingsBackupPath
+      $settings | Add-Member -NotePropertyName 'sessionDir' -NotePropertyValue $desiredSessionDir
+      Write-Utf8NoBomFile $settingsPath ($settings | ConvertTo-Json -Depth 100)
+      Write-Host "==> Added sessionDir to settings.json so PI uses '$desiredSessionDir'"
+      Write-Host "==> Backed up the previous settings.json to '$settingsBackupPath'"
     }
   } catch {
     Write-Warning "Failed to inspect settings.json for sessionDir overrides: $_"
@@ -283,6 +289,7 @@ foreach ($legacyImport in $legacySessionImports) {
 }
 
 if ($normalizedLegacyImports.Count -gt 0) {
+  New-Item -ItemType Directory -Path $outcomesRoot -Force | Out-Null
   foreach ($legacyImport in $normalizedLegacyImports) {
     $legacySource = $legacyImport['source']
     $legacyRecurse = [bool]$legacyImport['recurse']
@@ -302,7 +309,7 @@ if ($normalizedLegacyImports.Count -gt 0) {
     $hasRepoSessions = Test-DirectoryHasJsonlFiles $newSessions
   }
 } elseif ($hasRepoSessions) {
-  Write-Host "==> session history already present in the local sessions directory - no legacy migration needed"
+  Write-Host "==> session history already present in the local data/outcomes/sessions directory - no legacy migration needed"
 } else {
   Write-Host "==> No existing session history found to migrate"
 }
@@ -324,8 +331,6 @@ Write-Host ""
 Write-Host "Done. Open a new terminal so PI_CODING_AGENT_DIR takes effect, then run: pi"
 if ($sessionDirOverride) {
   Write-Warning "PI_CODING_AGENT_SESSION_DIR is still overriding the local sessions directory at '$newSessions'. Clear it if you want history stored there by default."
-} elseif ($sessionDirSettingOverrideActive) {
-  Write-Warning "A legacy sessionDir override is still active in settings.json. Clear it after migrating that store if you want history stored under '$newSessions' by default."
 } else {
   Write-Host "Session history is stored in local '$newSessions' (git-ignored)."
 }

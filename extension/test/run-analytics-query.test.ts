@@ -19,10 +19,10 @@ async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
 }
 
 async function getRunStorageDir(tempDir: string): Promise<string> {
-  const runsRoot = path.join(tempDir, 'runs');
-  const entries = await fs.readdir(runsRoot);
+  const usageDataRoot = path.join(tempDir, 'data', 'outcomes');
+  const entries = await fs.readdir(usageDataRoot);
   assert.equal(entries.length, 1, 'expected one hashed workspace directory');
-  return path.join(runsRoot, entries[0]);
+  return path.join(usageDataRoot, entries[0]);
 }
 
 const ANALYTICS_FACTORS: SessionAnalyticsFactors = {
@@ -64,7 +64,8 @@ test('queryRunAnalyticsStore returns finalized snapshots and checkpointed open r
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-query',
       dispatch: store.dispatch,
       getState: store.getState,
@@ -115,7 +116,8 @@ test('exportRunAnalyticsStore writes a supported JSON export payload', async () 
     }));
 
     const stats = new StatsService({
-      globalStoragePath: tempDir,
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
       workspaceId: 'workspace-export',
       dispatch: store.dispatch,
       getState: store.getState,

@@ -363,6 +363,54 @@ function mergeContinuationToolCalls(message: ChatMessage, incoming: ChatMessage)
   }
 }
 
+function assistantToolCallsFromMessage(message: ChatMessage): ToolCall[] {
+  if (message.role !== 'assistant') {
+    return [];
+  }
+
+  const partToolCalls = message.parts
+    ?.filter((part): part is Extract<ChatMessagePart, { kind: 'toolCall' }> => part.kind === 'toolCall')
+    .map((part) => cloneToolCall(part.toolCall));
+
+  if (partToolCalls && partToolCalls.length > 0) {
+    return partToolCalls;
+  }
+
+  return (message.toolCalls ?? []).map((toolCall) => cloneToolCall(toolCall));
+}
+
+function mergeAssistantToolCallsPreservingResolvedState(target: ChatMessage, previous: ChatMessage): void {
+  if (target.role !== 'assistant' || previous.role !== 'assistant') {
+    return;
+  }
+
+  const currentById = new Map(assistantToolCallsFromMessage(target).map((toolCall) => [toolCall.id, toolCall]));
+
+  for (const previousToolCall of assistantToolCallsFromMessage(previous)) {
+    const currentToolCall = currentById.get(previousToolCall.id);
+
+    if (!currentToolCall) {
+      upsertAssistantToolCall(target, previousToolCall);
+      currentById.set(previousToolCall.id, previousToolCall);
+      continue;
+    }
+
+    const mergedToolCall: ToolCall = {
+      ...currentToolCall,
+      name: currentToolCall.name || previousToolCall.name,
+      input: currentToolCall.input !== undefined ? currentToolCall.input : previousToolCall.input,
+      result: currentToolCall.result !== undefined ? currentToolCall.result : previousToolCall.result,
+      status:
+        currentToolCall.status === 'failed' || previousToolCall.status !== 'failed'
+          ? currentToolCall.status
+          : previousToolCall.status,
+    };
+
+    upsertAssistantToolCall(target, mergedToolCall);
+    currentById.set(mergedToolCall.id, mergedToolCall);
+  }
+}
+
 const transcriptSlice = createSlice({
   name: 'transcript',
   initialState: {
@@ -511,6 +559,10 @@ const transcriptSlice = createSlice({
       if (idx === -1) {
         list.push(normalizedMessage);
       } else {
+        const previousMessage = list[idx];
+        if (previousMessage) {
+          mergeAssistantToolCallsPreservingResolvedState(normalizedMessage, previousMessage);
+        }
         list[idx] = normalizedMessage;
       }
     },

@@ -51,7 +51,10 @@ function SystemPromptCard({ prompt }: SystemPromptCardProps) {
           <polyline points="3,2 7,5 3,8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
         <div class="tool-call-heading system-prompt-heading">
-          <span class={`tool-call-name${showSummary ? ' with-summary' : ''}`}>{prompt.title}</span>
+          <span
+            class={`tool-call-name${showSummary ? ' with-summary' : ''}`}
+            title={prompt.tooltip ?? prompt.title}
+          >{prompt.title}</span>
           {showSummary && <span class="tool-call-summary system-prompt-summary">{summary}</span>}
         </div>
       </div>
@@ -98,9 +101,9 @@ export function SystemPromptMessage({ prompts }: SystemPromptMessageProps) {
         </div>
       </div>
       <div class="tool-call-list">
-        {prompts.map((prompt) => (
+        {prompts.map((prompt, index) => (
           <SystemPromptCard
-            key={prompt.source}
+            key={`${prompt.source}:${prompt.title}:${prompt.summary}:${index}`}
             prompt={prompt}
           />
         ))}

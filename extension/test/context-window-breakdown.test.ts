@@ -37,7 +37,8 @@ test('buildContextWindowBreakdown sorts top contributors first, uses derived Oth
     systemPrompts: [
       makePrompt({ source: 'provider', availability: 'unknown', text: '' }),
       makePrompt({ source: 'harness', text: 'abcd' }),
-      makePrompt({ source: 'user', text: 'abcde' }),
+      makePrompt({ source: 'user', title: 'System append', text: 'abcde' }),
+      makePrompt({ source: 'user', title: 'Repo prompt', text: 'abcdefgh' }),
     ],
     transcript: [
       makeMessage({ role: 'user', markdown: 'abcd' }),
@@ -61,7 +62,7 @@ test('buildContextWindowBreakdown sorts top contributors first, uses derived Oth
   const byLabel = new Map(breakdown.entries.map((entry) => [entry.label ?? entry.key, entry]));
   const footer = new Map(breakdown.footerEntries.map((entry) => [entry.key, entry]));
 
-  // System prompt (harness 'abcd' ~1 + user 'abcde' ~2 = ~3 tokens)
+  // System prompt (harness 'abcd' ~1 + append 'abcde' ~2 + repo 'abcdefgh' ~2 = ~5 tokens)
   assert.equal(byLabel.get('System prompt')?.kind, 'estimated');
 
   // User message
@@ -99,7 +100,7 @@ test('buildContextWindowBreakdown sorts top contributors first, uses derived Oth
   assert.match(breakdown.title, /^Context window usage/m);
   assert.match(breakdown.title, /Used: 20/m);
   assert.match(breakdown.title, /Remaining: 80/m);
-  assert.match(breakdown.title, /System prompt: ~3 estimated/m);
+  assert.match(breakdown.title, /System prompt: ~5 estimated/m);
   assert.match(
     breakdown.title,
     /Note: Used tokens come from PI’s live context-window snapshot, not just the next prompt\./m,
