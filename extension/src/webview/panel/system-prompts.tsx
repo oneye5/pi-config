@@ -10,10 +10,13 @@ import {
   formatSystemPromptTokenLabel,
   getSystemPromptTokenEstimateTitle,
 } from './system-prompt-tokens';
+import { ToolCallHeader } from './transcript/tool-call-card';
 
 interface SystemPromptCardProps {
   prompt: SystemPromptEntry;
 }
+
+function ignoreOpenFile(_path: string): void {}
 
 function getCollapsedSummary(prompt: SystemPromptEntry): string {
   const summary = prompt.summary || reasoningSummary(prompt.text);
@@ -46,18 +49,15 @@ function SystemPromptCard({ prompt }: SystemPromptCardProps) {
       onClick={() => setOpen((value) => !value)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((value) => !value); } }}
     >
-      <div class="tool-call-header">
-        <svg class={`thinking-block-chevron${open ? ' open' : ''}`} width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <polyline points="3,2 7,5 3,8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <div class="tool-call-heading system-prompt-heading">
-          <span
-            class={`tool-call-name${showSummary ? ' with-summary' : ''}`}
-            title={prompt.tooltip ?? prompt.title}
-          >{prompt.title}</span>
-          {showSummary && <span class="tool-call-summary system-prompt-summary">{summary}</span>}
-        </div>
-      </div>
+      <ToolCallHeader
+        open={open}
+        name={prompt.title}
+        nameTitle={prompt.tooltip ?? prompt.title}
+        status="completed"
+        summary={showSummary ? summary : null}
+        sizeHint={undefined}
+        onOpenFile={ignoreOpenFile}
+      />
       {open && (
         <div class="tool-call-body">
           <div

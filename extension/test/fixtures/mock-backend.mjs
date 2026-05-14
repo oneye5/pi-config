@@ -17,7 +17,7 @@ import * as readline from 'node:readline';
 const SESSION_PATH = '/mock/sessions/test-session.jsonl';
 const SESSION_NAME = 'Test Session';
 const CWD = '/mock';
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 const HANDSHAKE = {
   sdkPath: '/mock/sdk',
   agentDir: '/mock/agent',
@@ -91,6 +91,15 @@ rl.on('line', (line) => {
           isPlaceholder: false,
         },
         transcript: [],
+        transcriptWindow: {
+          totalCount: 0,
+          loadedStart: 0,
+          loadedEnd: 0,
+          hasOlder: false,
+          hasNewer: false,
+          isPartial: false,
+          hasUserMessages: false,
+        },
         busy: false,
         systemPrompts: [
           {
@@ -127,7 +136,7 @@ rl.on('line', (line) => {
           toolSnippetHashes: [{ toolId: 'bash', hash: 'mock-tool-snippet-hash' }],
           toolSetHash: 'mock-tool-set-hash',
           skills: [{
-            name: 'verification-before-completion',
+            name: 'frontend-design',
             contentHash: 'mock-skill-hash',
             sourceHash: 'mock-skill-source-hash',
             disableModelInvocation: false,

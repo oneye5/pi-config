@@ -1,0 +1,178 @@
+import { defaultCreateId, defaultNow } from '../stats-service-helpers';
+import { store } from '../store';
+import type { RunAnalyticsExportPayload, RunAnalyticsQueryResult } from '../run-analytics-query';
+import type {
+  ComposerInput,
+  RunOutcome,
+  SessionAnalyticsFactors,
+  ThinkingLevel,
+  ToolCall,
+} from '../../shared/protocol';
+import { RunAnalyticsStorage } from './storage';
+import { SessionRunTracker } from './tracker';
+import type { RunObserver, StatsServiceOptions } from './types';
+
+export class StatsService implements RunObserver {
+  private readonly scheduleRender: () => void;
+  private readonly tracker: SessionRunTracker;
+  private readonly storage: RunAnalyticsStorage;
+  private startPromise: Promise<void> | null = null;
+  private started = false;
+
+  constructor(options: StatsServiceOptions) {
+    this.scheduleRender = options.scheduleRender ?? (() => undefined);
+    const dispatch = options.dispatch ?? store.dispatch;
+    const getState = options.getState ?? store.getState;
+    const now = options.now ?? defaultNow;
+    const createId = options.createId ?? defaultCreateId;
+    const getExperimentAssignment = options.getExperimentAssignment ?? (() => null);
+
+    const trackerRef: { current: SessionRunTracker | null } = { current: null };
+    this.storage = new RunAnalyticsStorage({
+      dataOutcomesRootPath: options.dataOutcomesRootPath,
+      legacyUsageDataRootPath: options.legacyUsageDataRootPath,
+      workspaceId: options.workspaceId,
+      legacyWorkspaceIds: options.legacyWorkspaceIds,
+      now,
+      serializeSessions: () => trackerRef.current?.serializeSessions() ?? {},
+    });
+    const tracker = new SessionRunTracker({
+      dispatch,
+      getState,
+      scheduleRender: this.scheduleRender,
+      schedulePersist: (snapshotToAppend, outcomeToAppend) => (
+        this.storage.schedulePersist(snapshotToAppend, outcomeToAppend)
+      ),
+      now,
+      createId,
+      getExperimentAssignment,
+    });
+    trackerRef.current = tracker;
+    this.tracker = tracker;
+  }
+
+  async start(): Promise<void> {
+    if (this.started) {
+      return;
+    }
+    if (this.startPromise) {
+      return await this.startPromise;
+    }
+
+    this.startPromise = (async () => {
+      const checkpoint = await this.storage.start();
+      this.tracker.restore(checkpoint?.sessions ?? {});
+      this.started = true;
+      this.scheduleRender();
+    })();
+
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  prepareForSend(sessionPath: string, inputs: ComposerInput[]): string {
+    return this.tracker.prepareForSend(sessionPath, inputs);
+  }
+
+  onAssistantTurnStarted(sessionPath: string, turnId: string): void {
+    this.tracker.onAssistantTurnStarted(sessionPath, turnId);
+  }
+
+  onAssistantTurnEnded(sessionPath: string, turnId: string, durationMs: number): void {
+    this.tracker.onAssistantTurnEnded(sessionPath, turnId, durationMs);
+  }
+
+  onToolStarted(sessionPath: string, toolCall: ToolCall): void {
+    this.tracker.onToolStarted(sessionPath, toolCall);
+  }
+
+  onToolFinished(sessionPath: string, toolCall: ToolCall): void {
+    this.tracker.onToolFinished(sessionPath, toolCall);
+  }
+
+  onInterrupted(sessionPath: string): void {
+    this.tracker.onInterrupted(sessionPath);
+  }
+
+  onMessageEdited(sessionPath: string, _messageId: string): void {
+    this.tracker.onMessageEdited(sessionPath);
+  }
+
+  onTruncatedAfter(sessionPath: string, _messageId: string): void {
+    this.tracker.onTruncatedAfter(sessionPath);
+  }
+
+  onBackendError(sessionPath: string | undefined, code: string): void {
+    this.tracker.onBackendError(sessionPath, code);
+  }
+
+  onContextUsageChanged(sessionPath: string, tokens: number | null, limit: number): void {
+    this.tracker.onContextUsageChanged(sessionPath, tokens, limit);
+  }
+
+  onBusyChanged(sessionPath: string, busy: boolean): void {
+    this.tracker.onBusyChanged(sessionPath, busy);
+  }
+
+  onModelConfigChanged(
+    sessionPath: string,
+    modelId: string | undefined,
+    thinkingLevel: ThinkingLevel | undefined,
+  ): void {
+    this.tracker.onModelConfigChanged(sessionPath, modelId, thinkingLevel);
+  }
+
+  onSessionAnalyticsFactorsChanged(sessionPath: string, factors: SessionAnalyticsFactors | null): void {
+    this.tracker.onSessionAnalyticsFactorsChanged(sessionPath, factors);
+  }
+
+  onUnsupportedInputAttempt(sessionPath: string): void {
+    this.tracker.onUnsupportedInputAttempt(sessionPath);
+  }
+
+  onSessionClosed(sessionPath: string): void {
+    this.tracker.onSessionClosed(sessionPath);
+  }
+
+  replaceSessionPath(oldPath: string, newPath: string): void {
+    this.tracker.replaceSessionPath(oldPath, newPath);
+  }
+
+  recordOutcome(sessionPath: string, outcome: RunOutcome): void {
+    this.tracker.recordOutcome(sessionPath, outcome);
+  }
+
+  startNewTask(sessionPath: string): void {
+    this.tracker.startNewTask(sessionPath);
+  }
+
+  continueTask(sessionPath: string): void {
+    this.tracker.continueTask(sessionPath);
+  }
+
+  onExperimentAssignmentChanged(assignment: string | null): void {
+    this.tracker.onExperimentAssignmentChanged(assignment);
+  }
+
+  async queryRunAnalytics(): Promise<RunAnalyticsQueryResult> {
+    await this.start();
+    return await this.storage.queryRunAnalytics();
+  }
+
+  async exportRunAnalytics(targetPath: string): Promise<RunAnalyticsExportPayload> {
+    await this.start();
+    return await this.storage.exportRunAnalytics(targetPath);
+  }
+
+  async flush(): Promise<void> {
+    await this.storage.flush();
+  }
+
+  async shutdown(): Promise<void> {
+    this.tracker.finalizeOpenRunsForShutdown();
+    await this.flush();
+  }
+}

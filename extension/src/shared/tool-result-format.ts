@@ -21,6 +21,17 @@ function textFromToolResultParts(parts: ToolResultContentPartLike[] | undefined)
 
 export function formatToolResult(message: ToolResultLike): unknown {
   if (message.details !== undefined) {
+    const hasContent =
+      (typeof message.content === 'string' && message.content.length > 0)
+      || (Array.isArray(message.content) && message.content.length > 0);
+
+    if (hasContent) {
+      return {
+        content: message.content,
+        details: message.details,
+      };
+    }
+
     return message.details;
   }
 

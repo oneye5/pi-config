@@ -1,0 +1,139 @@
+import * as fs from 'node:fs/promises';
+
+import { deriveSessionNameFromText, NEW_SESSION_NAME } from '../shared/session-name';
+import type {
+  ChatMessage,
+  ModelInfo,
+  SessionSummary,
+} from '../shared/protocol';
+import { normalizeThinkingLevel, resolveModelInputKinds } from './message-inputs';
+import type { SdkModule } from './sdk';
+import type { SessionContext } from './server-types';
+import { mapTranscript, summarizeSession, type SessionEntryLike } from './transcript';
+
+function textFromSessionMessageContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return (content as Array<{ type?: string; text?: string }>)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text ?? '')
+      .join('');
+  }
+
+  return '';
+}
+
+export async function deriveNameFromFile(filePath: string): Promise<string> {
+  try {
+    const content = await fs.readFile(filePath, 'utf8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const entry = JSON.parse(line) as SessionEntryLike;
+        if (entry.type === 'message' && entry.message?.role === 'user') {
+          const derived = deriveSessionNameFromText(
+            textFromSessionMessageContent(entry.message.content),
+          );
+          if (!derived.isPlaceholder) {
+            return derived.name;
+          }
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+  } catch {
+    // file not readable
+  }
+  return NEW_SESSION_NAME;
+}
+
+export async function listSessions(sdk: SdkModule): Promise<SessionSummary[]> {
+  const sessions = await sdk.SessionManager.listAll();
+  const summaries = await Promise.all(
+    sessions.map(async (session) => {
+      const summary = summarizeSession(session);
+      if (summary.name === NEW_SESSION_NAME && session.path) {
+        const derived = await deriveNameFromFile(session.path);
+        if (derived !== NEW_SESSION_NAME) {
+          summary.name = derived;
+          summary.isPlaceholder = false;
+        } else {
+          summary.isPlaceholder = true;
+        }
+      }
+      return summary;
+    }),
+  );
+  return summaries.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
+}
+
+export function deriveSessionName(context: SessionContext): { name: string; isPlaceholder: boolean } {
+  const sdkName = context.session.sessionName || context.session.sessionManager.getSessionName();
+  if (sdkName) {
+    return { name: sdkName, isPlaceholder: false };
+  }
+
+  const entries = context.session.sessionManager.getBranch() ?? [];
+  for (const entry of entries) {
+    if (entry.type === 'message' && entry.message?.role === 'user') {
+      const derived = deriveSessionNameFromText(
+        textFromSessionMessageContent(entry.message.content),
+      );
+      if (!derived.isPlaceholder) {
+        return derived;
+      }
+    }
+  }
+
+  return { name: NEW_SESSION_NAME, isPlaceholder: true };
+}
+
+export function buildCurrentSummary(
+  context: SessionContext,
+  startupCwd: string,
+): SessionSummary {
+  const messageCount = context.session.messages.length ?? 0;
+  const { name, isPlaceholder } = deriveSessionName(context);
+  return {
+    path: context.sessionPath,
+    cwd: context.session.sessionManager.getCwd() ?? startupCwd,
+    name,
+    isPlaceholder,
+    modifiedAt: new Date().toISOString(),
+    messageCount,
+    modelId: context.session.model?.id,
+    thinkingLevel: normalizeThinkingLevel(context.session.thinkingLevel),
+  };
+}
+
+export function buildTranscript(context: SessionContext): ChatMessage[] {
+  const entries = context.session.sessionManager.getBranch() ?? [];
+  return mapTranscript(entries);
+}
+
+export function listAvailableModels(context?: SessionContext): ModelInfo[] {
+  if (!context) {
+    return [];
+  }
+
+  try {
+    const models = context.runtime.services?.modelRegistry?.getAvailable() ?? [];
+    return models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: model.provider,
+      reasoning: model.reasoning,
+      inputKinds: resolveModelInputKinds(model as unknown as Record<string, unknown>),
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+    }));
+  } catch {
+    return [];
+  }
+}

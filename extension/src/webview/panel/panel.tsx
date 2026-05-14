@@ -13,7 +13,7 @@ import type {
   ViewState,
   WebviewToHostMessage,
 } from '../../shared/protocol';
-import { DEFAULT_CHAT_PREFS } from '../../shared/protocol';
+import { DEFAULT_CHAT_PREFS, EMPTY_TRANSCRIPT_WINDOW } from '../../shared/protocol';
 import { emptyOverlay, applyPatch } from './overlay';
 import { resolvePanelSurface } from './panel-state';
 import { TranscriptView } from './transcript';
@@ -50,6 +50,7 @@ const EMPTY_VIEW_STATE: ViewState = {
   unreadFinishedSessionPaths: [],
   activeSession: null,
   transcript: [],
+  transcriptWindow: { ...EMPTY_TRANSCRIPT_WINDOW },
   pendingComposerInputs: [],
   activeRunSummary: null,
   runSummariesBySession: {},
@@ -151,6 +152,7 @@ function App() {
 
   // Track last revision via ref (not state) to avoid triggering snapshot requests on every re-render
   const lastRevisionRef = useRef(0);
+  const awaitingSnapshotRef = useRef(false);
   const hostInstanceIdRef = useRef('');
   const activeSessionPathRef = useRef<string | null>(null);
   const pendingDraftRestoreRef = useRef(new Map<string, { text: string }>());
@@ -177,6 +179,7 @@ function App() {
         if (hostChanged) {
           lastRevisionRef.current = 0;
         }
+        awaitingSnapshotRef.current = false;
         hostInstanceIdRef.current = msg.hostInstanceId;
         activeSessionPathRef.current = nextActiveSessionPath;
         lastRevisionRef.current = msg.revision;
@@ -196,15 +199,21 @@ function App() {
         if (hostInstanceIdRef.current && msg.hostInstanceId !== hostInstanceIdRef.current) {
           hostInstanceIdRef.current = msg.hostInstanceId;
           lastRevisionRef.current = 0;
+          awaitingSnapshotRef.current = true;
           clearTransientUi();
           setOverlay(emptyOverlay());
           postMessage({ type: 'requestSnapshot' });
           return;
         }
+        if (msg.revision <= lastRevisionRef.current) {
+          return;
+        }
         const expected = lastRevisionRef.current + 1;
-        if (lastRevisionRef.current > 0 && msg.revision !== expected) {
-          postMessage({ type: 'requestSnapshot' });
-          lastRevisionRef.current = msg.revision;
+        if (awaitingSnapshotRef.current || (lastRevisionRef.current > 0 && msg.revision !== expected)) {
+          if (!awaitingSnapshotRef.current) {
+            postMessage({ type: 'requestSnapshot' });
+          }
+          awaitingSnapshotRef.current = true;
           return;
         }
         lastRevisionRef.current = msg.revision;
@@ -271,7 +280,10 @@ function App() {
   }, []);
   const handleOpenFile = useCallback((path: string) => postMessage({ type: 'openFile', path }), []);
   const handleNewSession = useCallback(() => postMessage({ type: 'newSession' }), []);
-  const handleSelectTab = useCallback((path: string) => postMessage({ type: 'openSession', sessionPath: path }), []);
+  const handleSelectTab = useCallback((path: string) => {
+    activeSessionPathRef.current = path;
+    postMessage({ type: 'openSession', sessionPath: path });
+  }, []);
   const handleCloseTab = useCallback((path: string) => postMessage({ type: 'closeSession', sessionPath: path }), []);
   const handleMoveTab = useCallback((sessionPath: string | undefined, fromIndex: number, toIndex: number) => {
     postMessage({ type: 'moveSessionTab', sessionPath, fromIndex, toIndex });
@@ -317,6 +329,7 @@ function App() {
     unreadFinishedSessionPaths,
     activeSession,
     transcript,
+    transcriptWindow,
     pendingComposerInputs,
     activeRunSummary,
     busy,
@@ -341,6 +354,7 @@ function App() {
   const panelSurface = resolvePanelSurface({ backendReady, notice, openTabPaths });
   const hasActiveTabs = panelSurface === 'session';
   const showSessionChrome = panelSurface !== 'loading';
+  const activeSessionPath = activeSession?.path ?? null;
 
   return (
     <div id="app">
@@ -398,8 +412,10 @@ function App() {
           </div>
         ) : (
           <TranscriptView
-            sessionKey={activeSession?.path ?? null}
+            key={activeSessionPath ?? 'no-active-session'}
+            sessionKey={activeSessionPath}
             transcript={transcript}
+            transcriptWindow={transcriptWindow}
             busy={busy}
             overlay={overlay}
             prefs={prefs}
@@ -411,6 +427,18 @@ function App() {
             onEditCancel={handleCancelEdit}
             onOpenFile={handleOpenFile}
             onContextMenu={handleOpenContextMenu}
+            onLoadOlder={() => postMessage({
+              type: 'loadOlderTranscript',
+              sessionPath: activeSessionPath ?? undefined,
+            })}
+            onLoadNewer={() => postMessage({
+              type: 'loadNewerTranscript',
+              sessionPath: activeSessionPath ?? undefined,
+            })}
+            onJumpToLatest={() => postMessage({
+              type: 'jumpToLatestTranscript',
+              sessionPath: activeSessionPath ?? undefined,
+            })}
           />
         )}
       </div>
@@ -426,6 +454,7 @@ function App() {
           prefs={prefs}
           systemPrompts={systemPrompts}
           transcript={transcript}
+          transcriptWindow={transcriptWindow}
           draftRestore={draftRestore}
           pendingComposerInputs={pendingComposerInputs}
           activeRunSummary={activeRunSummary}

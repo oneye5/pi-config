@@ -1,0 +1,792 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-05-13T20:15:00.000Z",
+  "workspaceKey": "wk_4f0b82c93a7d1e11",
+  "completedRuns": [
+    {
+      "sessionPath": "C:\\Users\\analyst\\SENTINEL_PRIVATE_SESSION_PATH_ALPHA\\run-001.jsonl",
+      "runId": "run-001",
+      "taskGroupId": "task-001",
+      "status": "scored",
+      "scored": true,
+      "startedAt": "2026-05-10T14:05:00.000Z",
+      "updatedAt": "2026-05-10T14:18:00.000Z",
+      "finalizedAt": "2026-05-10T14:19:00.000Z",
+      "finalizationReason": "scored",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 5
+      },
+      "modelId": "gpt-4.1",
+      "thinkingLevel": "low",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": false,
+      "treatmentChangeKinds": [],
+      "experimentAssignment": "control",
+      "analyticsFactors": {
+        "promptFamily": "default",
+        "promptHash": "ph_001f2c4d",
+        "harnessPromptHash": "hh_101f2c4d",
+        "customPromptHash": null,
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [
+          "pg_guide_a",
+          "pg_guide_b"
+        ],
+        "contextFiles": [
+          {
+            "path": "D:\\Repo\\SENTINEL_PRIVATE_CONTEXT_FILE_ALPHA\\plan.md",
+            "hash": "ctx_a1"
+          }
+        ],
+        "selectedToolIds": [
+          "read",
+          "bash",
+          "edit"
+        ],
+        "toolSnippetHashes": [
+          {
+            "toolId": "read",
+            "hash": "tool_read_a"
+          },
+          {
+            "toolId": "edit",
+            "hash": "tool_edit_a"
+          }
+        ],
+        "toolSetHash": "ts_control_a",
+        "skills": [
+          {
+            "name": "verification-before-completion",
+            "contentHash": "skill_verify_a",
+            "sourceHash": "skill_source_verify_a",
+            "disableModelInvocation": false
+          }
+        ],
+        "skillSetHash": "ss_verify_a"
+      },
+      "sendCount": 2,
+      "assistantTurnCount": 2,
+      "assistantTurnDurationMs": 61000,
+      "busyDurationMs": 68000,
+      "busyPeriodCount": 2,
+      "interruptedCount": 0,
+      "messageEditCount": 1,
+      "truncatedAfterCount": 0,
+      "backendErrorCodes": [],
+      "contextTokens": 18200,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 2,
+      "imageInputCount": 0,
+      "imageInputBytes": 0,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "filesystemPathRef"
+      ],
+      "toolUsage": {
+        "totalCount": 6,
+        "failureCount": 0,
+        "countsByName": {
+          "read": 3,
+          "bash": 2,
+          "edit": 1
+        },
+        "failureCountsByName": {},
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 0,
+        "editCount": 2,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 1,
+        "lineAdditions": 24,
+        "lineDeletions": 6,
+        "lineModifications": 3
+      },
+      "verification": {
+        "totalCount": 2,
+        "failureCount": 0,
+        "countsByKind": {
+          "test": 1,
+          "build": 1,
+          "lint": 0,
+          "typecheck": 0,
+          "format": 0,
+          "other": 0
+        }
+      }
+    },
+    {
+      "sessionPath": "C:\\Users\\analyst\\SENTINEL_PRIVATE_SESSION_PATH_BRAVO\\run-002.jsonl",
+      "runId": "run-002",
+      "taskGroupId": "task-002",
+      "status": "scored",
+      "scored": true,
+      "startedAt": "2026-05-10T16:40:00.000Z",
+      "updatedAt": "2026-05-10T17:02:00.000Z",
+      "finalizedAt": "2026-05-10T17:04:00.000Z",
+      "finalizationReason": "scored",
+      "outcome": {
+        "resolution": "partially_resolved",
+        "satisfaction": 3
+      },
+      "modelId": "gpt-4.1",
+      "thinkingLevel": "high",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": true,
+      "treatmentChangeKinds": [
+        "thinking",
+        "prompt"
+      ],
+      "experimentAssignment": "control",
+      "analyticsFactors": {
+        "promptFamily": "default",
+        "promptHash": "ph_001f2c4d",
+        "harnessPromptHash": "hh_101f2c4d",
+        "customPromptHash": "cp_variant_blue",
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [
+          "pg_guide_a"
+        ],
+        "contextFiles": [
+          {
+            "path": "D:\\Repo\\SENTINEL_PRIVATE_CONTEXT_FILE_BRAVO\\query.sql",
+            "hash": "ctx_b1"
+          },
+          {
+            "path": "D:\\Repo\\SENTINEL_PRIVATE_CONTEXT_FILE_DELTA\\schema.md",
+            "hash": "ctx_b2"
+          }
+        ],
+        "selectedToolIds": [
+          "read",
+          "bash",
+          "write"
+        ],
+        "toolSnippetHashes": [
+          {
+            "toolId": "bash",
+            "hash": "tool_bash_b"
+          }
+        ],
+        "toolSetHash": "ts_control_b",
+        "skills": [
+          {
+            "name": "verification-before-completion",
+            "contentHash": "skill_verify_b",
+            "sourceHash": "skill_source_verify_b",
+            "disableModelInvocation": false
+          }
+        ],
+        "skillSetHash": "ss_verify_b"
+      },
+      "sendCount": 3,
+      "assistantTurnCount": 2,
+      "assistantTurnDurationMs": 84000,
+      "busyDurationMs": 95000,
+      "busyPeriodCount": 3,
+      "interruptedCount": 1,
+      "messageEditCount": 2,
+      "truncatedAfterCount": 1,
+      "backendErrorCodes": [
+        "subagent_timeout"
+      ],
+      "contextTokens": 24500,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 3,
+      "imageInputCount": 0,
+      "imageInputBytes": 0,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "filesystemPathRef"
+      ],
+      "toolUsage": {
+        "totalCount": 7,
+        "failureCount": 1,
+        "countsByName": {
+          "read": 2,
+          "bash": 3,
+          "write": 2
+        },
+        "failureCountsByName": {
+          "bash": 1
+        },
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 1,
+        "editCount": 1,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 2,
+        "lineAdditions": 38,
+        "lineDeletions": 15,
+        "lineModifications": 11
+      },
+      "verification": {
+        "totalCount": 1,
+        "failureCount": 1,
+        "countsByKind": {
+          "test": 0,
+          "build": 0,
+          "lint": 1,
+          "typecheck": 0,
+          "format": 0,
+          "other": 0
+        }
+      }
+    },
+    {
+      "sessionPath": "/Users/analyst/SENTINEL_PRIVATE_SESSION_PATH_CHARLIE/run-003.jsonl",
+      "runId": "run-003",
+      "taskGroupId": "task-003",
+      "status": "scored",
+      "scored": true,
+      "startedAt": "2026-05-11T09:15:00.000Z",
+      "updatedAt": "2026-05-11T09:34:00.000Z",
+      "finalizedAt": "2026-05-11T09:35:00.000Z",
+      "finalizationReason": "scored",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 4
+      },
+      "modelId": "claude-sonnet-4",
+      "thinkingLevel": "medium",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": false,
+      "treatmentChangeKinds": [],
+      "experimentAssignment": "variant-fast",
+      "analyticsFactors": {
+        "promptFamily": "analysis-review",
+        "promptHash": "ph_review_c",
+        "harnessPromptHash": "hh_review_c",
+        "customPromptHash": null,
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [
+          "pg_guide_c"
+        ],
+        "contextFiles": [
+          {
+            "path": "/workspace/SENTINEL_PRIVATE_CONTEXT_FILE_CHARLIE/dashboard.ts",
+            "hash": "ctx_c1"
+          }
+        ],
+        "selectedToolIds": [
+          "read",
+          "subagent",
+          "bash"
+        ],
+        "toolSnippetHashes": [
+          {
+            "toolId": "subagent",
+            "hash": "tool_subagent_c"
+          }
+        ],
+        "toolSetHash": "ts_variant_fast_c",
+        "skills": [
+          {
+            "name": "verification-before-completion",
+            "contentHash": "skill_verify_c",
+            "sourceHash": "skill_source_verify_c",
+            "disableModelInvocation": false
+          },
+          {
+            "name": "frontend-design",
+            "contentHash": "skill_frontend_c",
+            "sourceHash": "skill_source_frontend_c",
+            "disableModelInvocation": false
+          }
+        ],
+        "skillSetHash": "ss_multi_c"
+      },
+      "sendCount": 2,
+      "assistantTurnCount": 2,
+      "assistantTurnDurationMs": 72000,
+      "busyDurationMs": 76000,
+      "busyPeriodCount": 2,
+      "interruptedCount": 0,
+      "messageEditCount": 0,
+      "truncatedAfterCount": 0,
+      "backendErrorCodes": [],
+      "contextTokens": 16800,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 1,
+      "imageInputCount": 0,
+      "imageInputBytes": 0,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "filesystemPathRef"
+      ],
+      "toolUsage": {
+        "totalCount": 5,
+        "failureCount": 0,
+        "countsByName": {
+          "read": 2,
+          "subagent": 1,
+          "bash": 2
+        },
+        "failureCountsByName": {},
+        "subagentCallCount": 1,
+        "subagentTaskCount": 2,
+        "subagentAgentNames": [
+          "reviewer",
+          "verifier"
+        ]
+      },
+      "fileMutation": {
+        "writeCount": 0,
+        "editCount": 3,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 2,
+        "lineAdditions": 19,
+        "lineDeletions": 7,
+        "lineModifications": 9
+      },
+      "verification": {
+        "totalCount": 2,
+        "failureCount": 0,
+        "countsByKind": {
+          "test": 1,
+          "build": 0,
+          "lint": 0,
+          "typecheck": 1,
+          "format": 0,
+          "other": 0
+        }
+      }
+    },
+    {
+      "sessionPath": "/Users/analyst/SENTINEL_PRIVATE_SESSION_PATH_DELTA/run-004.jsonl",
+      "runId": "run-004",
+      "taskGroupId": "task-004",
+      "status": "closed_unscored",
+      "scored": false,
+      "startedAt": "2026-05-11T13:10:00.000Z",
+      "updatedAt": "2026-05-11T13:22:00.000Z",
+      "finalizedAt": "2026-05-11T13:22:30.000Z",
+      "finalizationReason": "closed_unscored",
+      "modelId": "claude-sonnet-4",
+      "thinkingLevel": "off",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": false,
+      "treatmentChangeKinds": [],
+      "experimentAssignment": null,
+      "analyticsFactors": {
+        "promptFamily": "quick-check",
+        "promptHash": "ph_quick_d",
+        "harnessPromptHash": "hh_quick_d",
+        "customPromptHash": null,
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [],
+        "contextFiles": [],
+        "selectedToolIds": [
+          "read"
+        ],
+        "toolSnippetHashes": [],
+        "toolSetHash": "ts_quick_d",
+        "skills": [],
+        "skillSetHash": null
+      },
+      "sendCount": 1,
+      "assistantTurnCount": 1,
+      "assistantTurnDurationMs": 18000,
+      "busyDurationMs": 22000,
+      "busyPeriodCount": 1,
+      "interruptedCount": 0,
+      "messageEditCount": 0,
+      "truncatedAfterCount": 0,
+      "backendErrorCodes": [],
+      "contextTokens": 6200,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 0,
+      "imageInputCount": 0,
+      "imageInputBytes": 0,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [],
+      "toolUsage": {
+        "totalCount": 1,
+        "failureCount": 0,
+        "countsByName": {
+          "read": 1
+        },
+        "failureCountsByName": {},
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 0,
+        "editCount": 0,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 0,
+        "lineAdditions": 0,
+        "lineDeletions": 0,
+        "lineModifications": 0
+      },
+      "verification": {
+        "totalCount": 0,
+        "failureCount": 0,
+        "countsByKind": {
+          "test": 0,
+          "build": 0,
+          "lint": 0,
+          "typecheck": 0,
+          "format": 0,
+          "other": 0
+        }
+      }
+    },
+    {
+      "sessionPath": "D:\\Sessions\\SENTINEL_PRIVATE_SESSION_PATH_ECHO\\run-005.jsonl",
+      "runId": "run-005",
+      "taskGroupId": "task-005",
+      "status": "scored",
+      "scored": true,
+      "startedAt": "2026-05-12T10:00:00.000Z",
+      "updatedAt": "2026-05-12T10:27:00.000Z",
+      "finalizedAt": "2026-05-12T10:30:00.000Z",
+      "finalizationReason": "scored",
+      "outcome": {
+        "resolution": "unresolved",
+        "satisfaction": 2
+      },
+      "modelId": "gpt-4.1-mini",
+      "mixedModelConfig": true,
+      "mixedTreatmentConfig": true,
+      "treatmentChangeKinds": [
+        "model",
+        "experimentAssignment"
+      ],
+      "experimentAssignment": "variant-safe",
+      "analyticsFactors": {
+        "promptFamily": null,
+        "promptHash": "ph_safe_e",
+        "harnessPromptHash": "hh_safe_e",
+        "customPromptHash": null,
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [
+          "pg_guide_e"
+        ],
+        "contextFiles": [
+          {
+            "path": "/workspace/SENTINEL_PRIVATE_CONTEXT_FILE_ECHO/notes.md",
+            "hash": "ctx_e1"
+          }
+        ],
+        "selectedToolIds": [
+          "read",
+          "bash",
+          "edit"
+        ],
+        "toolSnippetHashes": [],
+        "toolSetHash": "ts_variant_safe_e",
+        "skills": [
+          {
+            "name": "verification-before-completion",
+            "contentHash": "skill_verify_e",
+            "sourceHash": "skill_source_verify_e",
+            "disableModelInvocation": false
+          }
+        ],
+        "skillSetHash": "ss_verify_e"
+      },
+      "sendCount": 4,
+      "assistantTurnCount": 3,
+      "assistantTurnDurationMs": 109000,
+      "busyDurationMs": 121000,
+      "busyPeriodCount": 4,
+      "interruptedCount": 1,
+      "messageEditCount": 3,
+      "truncatedAfterCount": 1,
+      "backendErrorCodes": [
+        "backend_restarted"
+      ],
+      "contextTokens": 31400,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 1,
+      "imageInputCount": 1,
+      "imageInputBytes": 132000,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "filesystemPathRef",
+        "imageBlob"
+      ],
+      "toolUsage": {
+        "totalCount": 8,
+        "failureCount": 2,
+        "countsByName": {
+          "read": 2,
+          "bash": 3,
+          "edit": 2,
+          "write": 1
+        },
+        "failureCountsByName": {
+          "bash": 1,
+          "write": 1
+        },
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 1,
+        "editCount": 2,
+        "deleteCount": 0,
+        "renameCount": 1,
+        "touchedFileCount": 3,
+        "lineAdditions": 42,
+        "lineDeletions": 21,
+        "lineModifications": 15
+      },
+      "verification": {
+        "totalCount": 2,
+        "failureCount": 1,
+        "countsByKind": {
+          "test": 1,
+          "build": 0,
+          "lint": 0,
+          "typecheck": 0,
+          "format": 0,
+          "other": 1
+        }
+      }
+    },
+    {
+      "sessionPath": "/srv/local/SENTINEL_PRIVATE_SESSION_PATH_FOXTROT/run-006.jsonl",
+      "runId": "run-006",
+      "taskGroupId": "task-006",
+      "status": "scored",
+      "scored": true,
+      "startedAt": "2026-05-12T15:42:00.000Z",
+      "updatedAt": "2026-05-12T15:58:00.000Z",
+      "finalizedAt": "2026-05-12T16:00:00.000Z",
+      "finalizationReason": "scored",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 4
+      },
+      "modelId": "gpt-4.1-mini",
+      "thinkingLevel": "minimal",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": false,
+      "treatmentChangeKinds": [],
+      "experimentAssignment": "variant-safe",
+      "analyticsFactors": null,
+      "sendCount": 2,
+      "assistantTurnCount": 2,
+      "assistantTurnDurationMs": 54000,
+      "busyDurationMs": 59000,
+      "busyPeriodCount": 2,
+      "interruptedCount": 0,
+      "messageEditCount": 1,
+      "truncatedAfterCount": 0,
+      "backendErrorCodes": [],
+      "contextTokens": null,
+      "contextLimit": null,
+      "filesystemPathRefCount": 0,
+      "imageInputCount": 2,
+      "imageInputBytes": 245000,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "imageBlob"
+      ],
+      "toolUsage": {
+        "totalCount": 4,
+        "failureCount": 0,
+        "countsByName": {
+          "read": 1,
+          "bash": 1,
+          "write": 2
+        },
+        "failureCountsByName": {},
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 2,
+        "editCount": 0,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 2,
+        "lineAdditions": 28,
+        "lineDeletions": 0,
+        "lineModifications": 0
+      },
+      "verification": {
+        "totalCount": 1,
+        "failureCount": 0,
+        "countsByKind": {
+          "test": 0,
+          "build": 1,
+          "lint": 0,
+          "typecheck": 0,
+          "format": 0,
+          "other": 0
+        }
+      }
+    }
+  ],
+  "openRuns": [
+    {
+      "sessionPath": "/srv/local/SENTINEL_PRIVATE_SESSION_PATH_GOLF/run-007.jsonl",
+      "runId": "run-007",
+      "taskGroupId": "task-007",
+      "status": "open",
+      "scored": false,
+      "startedAt": "2026-05-13T08:05:00.000Z",
+      "updatedAt": "2026-05-13T08:16:00.000Z",
+      "modelId": "claude-sonnet-4",
+      "thinkingLevel": "medium",
+      "mixedModelConfig": false,
+      "mixedTreatmentConfig": false,
+      "treatmentChangeKinds": [],
+      "experimentAssignment": "variant-fast",
+      "analyticsFactors": {
+        "promptFamily": "analysis-review",
+        "promptHash": "ph_open_g",
+        "harnessPromptHash": "hh_open_g",
+        "customPromptHash": null,
+        "appendSystemPromptHash": "as_001a1a1a",
+        "promptGuidelineHashes": [
+          "pg_guide_g"
+        ],
+        "contextFiles": [
+          {
+            "path": "/workspace/SENTINEL_PRIVATE_CONTEXT_FILE_GOLF/live-metrics.csv",
+            "hash": "ctx_g1"
+          }
+        ],
+        "selectedToolIds": [
+          "read",
+          "bash"
+        ],
+        "toolSnippetHashes": [],
+        "toolSetHash": "ts_open_g",
+        "skills": [],
+        "skillSetHash": null
+      },
+      "sendCount": 1,
+      "assistantTurnCount": 1,
+      "assistantTurnDurationMs": 21000,
+      "busyDurationMs": 26000,
+      "busyPeriodCount": 1,
+      "interruptedCount": 0,
+      "messageEditCount": 0,
+      "truncatedAfterCount": 0,
+      "backendErrorCodes": [],
+      "contextTokens": 9100,
+      "contextLimit": 200000,
+      "filesystemPathRefCount": 1,
+      "imageInputCount": 0,
+      "imageInputBytes": 0,
+      "unsupportedInputCount": 0,
+      "inputKindsUsed": [
+        "filesystemPathRef"
+      ],
+      "toolUsage": {
+        "totalCount": 2,
+        "failureCount": 0,
+        "countsByName": {
+          "read": 1,
+          "bash": 1
+        },
+        "failureCountsByName": {},
+        "subagentCallCount": 0,
+        "subagentTaskCount": 0,
+        "subagentAgentNames": []
+      },
+      "fileMutation": {
+        "writeCount": 0,
+        "editCount": 1,
+        "deleteCount": 0,
+        "renameCount": 0,
+        "touchedFileCount": 1,
+        "lineAdditions": 8,
+        "lineDeletions": 2,
+        "lineModifications": 1
+      },
+      "verification": {
+        "totalCount": 0,
+        "failureCount": 0,
+        "countsByKind": {
+          "test": 0,
+          "build": 0,
+          "lint": 0,
+          "typecheck": 0,
+          "format": 0,
+          "other": 0
+        }
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "schemaVersion": 1,
+      "kind": "run_outcome",
+      "recordedAt": "2026-05-10T14:19:00.000Z",
+      "sessionPath": "C:\\Users\\analyst\\SENTINEL_PRIVATE_SESSION_PATH_ALPHA\\run-001.jsonl",
+      "runId": "run-001",
+      "taskGroupId": "task-001",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 5
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "run_outcome",
+      "recordedAt": "2026-05-10T17:04:00.000Z",
+      "sessionPath": "C:\\Users\\analyst\\SENTINEL_PRIVATE_SESSION_PATH_BRAVO\\run-002.jsonl",
+      "runId": "run-002",
+      "taskGroupId": "task-002",
+      "outcome": {
+        "resolution": "partially_resolved",
+        "satisfaction": 3
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "run_outcome",
+      "recordedAt": "2026-05-11T09:35:00.000Z",
+      "sessionPath": "/Users/analyst/SENTINEL_PRIVATE_SESSION_PATH_CHARLIE/run-003.jsonl",
+      "runId": "run-003",
+      "taskGroupId": "task-003",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 4
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "run_outcome",
+      "recordedAt": "2026-05-12T10:30:00.000Z",
+      "sessionPath": "D:\\Sessions\\SENTINEL_PRIVATE_SESSION_PATH_ECHO\\run-005.jsonl",
+      "runId": "run-005",
+      "taskGroupId": "task-005",
+      "outcome": {
+        "resolution": "unresolved",
+        "satisfaction": 2
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "run_outcome",
+      "recordedAt": "2026-05-12T16:00:00.000Z",
+      "sessionPath": "/srv/local/SENTINEL_PRIVATE_SESSION_PATH_FOXTROT/run-006.jsonl",
+      "runId": "run-006",
+      "taskGroupId": "task-006",
+      "outcome": {
+        "resolution": "resolved",
+        "satisfaction": 4
+      }
+    }
+  ]
+}

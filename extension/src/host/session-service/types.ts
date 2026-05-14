@@ -1,0 +1,16 @@
+import type { SessionCompletionEvent } from '../completion-notification';
+import type { PatchOp, HostToWebviewMessage } from '../../shared/protocol';
+
+export type ScheduleRender = () => void;
+export type PostPatch = (op: PatchOp) => void;
+export type PostImperative = (message: HostToWebviewMessage) => void;
+export type OnSessionCompleted = (event: SessionCompletionEvent) => void;
+
+export type SelectionRequest = {
+  token: string;
+  requestedPath: string;
+  pendingPath?: string;
+  insertedPlaceholder: boolean;
+  previousActivePath: string | null;
+  wasOpenTab: boolean;
+};

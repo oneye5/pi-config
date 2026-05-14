@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { mapTranscript, type SessionEntryLike } from '../src/backend/transcript';
+import { formatToolCallResultForDisplay, getRenderableSubagentResult } from '../src/webview/panel/transcript';
 
 test('mapTranscript preserves assistant part ordering from session entries', () => {
   const entries: SessionEntryLike[] = [
@@ -166,4 +167,40 @@ test('mapTranscript preserves continuation separators in assistant parts', () =>
       'text:first answer\n\nsecond answer',
     ],
   );
+});
+
+test('mapTranscript preserves subagent failure content for reopened sessions', () => {
+  const entries: SessionEntryLike[] = [
+    {
+      id: 'assistant-1',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      type: 'message',
+      message: {
+        role: 'assistant',
+        timestamp: Date.parse('2026-01-01T00:00:01.000Z'),
+        content: [
+          { type: 'toolCall', id: 'tc-sub', name: 'subagent', arguments: { tasks: [{ agent: 'scout', task: 'Investigate' }] } },
+        ],
+      },
+    },
+    {
+      id: 'tool-result-1',
+      timestamp: '2026-01-01T00:00:03.500Z',
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'tc-sub',
+        content: [{ type: 'text', text: 'Too many parallel tasks (6). Max is 5.' }],
+        details: { mode: 'parallel', results: [] },
+        isError: true,
+      },
+    },
+  ];
+
+  const transcript = mapTranscript(entries);
+  const toolCall = transcript.find((message) => message.id === 'assistant-1')?.toolCalls?.[0];
+
+  assert.equal(toolCall?.status, 'failed');
+  assert.equal(getRenderableSubagentResult(toolCall?.result), undefined);
+  assert.equal(formatToolCallResultForDisplay(toolCall as any), 'Too many parallel tasks (6). Max is 5.');
 });

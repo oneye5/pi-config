@@ -25,6 +25,7 @@
 ## Snapshot And Patch Recovery
 
 - Full snapshots are the authoritative base.
+- A full snapshot contains the currently loaded transcript window (`transcript`) plus explicit window metadata (`transcriptWindow`), not necessarily the entire historical transcript.
 - Patches are applied only when the webview is visible and able to consume them.
 - If a patch cannot be delivered, the host marks the stream dirty instead of advancing revision.
 - When visibility returns, the next host-to-webview sync is a full snapshot.

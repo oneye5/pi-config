@@ -119,6 +119,11 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
    * webview can rebase its gap-detection counter.
    */
   postState(): void {
+    if (this.scheduleTimer !== undefined) {
+      clearTimeout(this.scheduleTimer);
+      this.scheduleTimer = undefined;
+    }
+
     const previousRevision = this.syncState.revision;
     const result = buildStateEnvelope(
       this.syncState,

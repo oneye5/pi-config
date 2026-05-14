@@ -1,7 +1,8 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource preact */
 
-import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
+import { memo } from 'preact/compat';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 
 import type {
   ActiveRunSummary,
@@ -14,11 +15,12 @@ import type {
   ModelSettings,
   SystemPromptEntry,
   ThinkingLevel,
+  TranscriptWindow,
 } from '../../shared/protocol';
-import { CHAT_PREF_MENU_SECTIONS, toggleChatPref } from './chat-prefs';
 import { buildContextWindowBreakdown } from './context-window-breakdown';
 import { buildContextWindowIndicatorState } from './context-window-indicator';
 import { shouldHandleGlobalComposerPaste } from './composer-affordances';
+import { describeComposerInputSummary } from './composer-inputs';
 import { resolveComposerModelState } from './composer-model-state';
 import {
   canAcceptComposerTransfer,
@@ -26,109 +28,16 @@ import {
   formatComposerTransferError,
   hasClipboardFilePayload,
 } from './file-drop';
-import {
-  composerInputDetail,
-  composerInputDisplayName,
-  composerInputTitle,
-  describeComposerInputSummary,
-} from './composer-inputs';
+import { ComposerAttachments } from './composer/attachments';
+import { ComposerToolbar } from './composer/toolbar';
 import { getComposerRunControls } from './session-tab-run-state';
 export { SessionTabs } from './session-tabs';
 
-// ─── Composer ────────────────────────────────────────────────────────────────
+const COMPOSER_TEXTAREA_MAX_HEIGHT = 200;
 
-const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Max',
-};
-
-interface ComposerSettingsMenuProps {
-  prefs: ChatPrefs;
-  onSetPrefs: (prefs: Partial<ChatPrefs>) => void;
-}
-
-function ComposerSettingsMenu({ prefs, onSetPrefs }: ComposerSettingsMenuProps) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div ref={menuRef} class="toolbar-settings">
-      <button
-        class={`toolbar-settings-trigger${open ? ' open' : ''}`}
-        type="button"
-        aria-label="Chat settings"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Chat settings"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 .99-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51.99H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-      </button>
-
-      {open && (
-        <div class="toolbar-settings-menu" role="menu" aria-label="Chat settings menu">
-          {CHAT_PREF_MENU_SECTIONS.map((section) => (
-            <div key={section.id} class="toolbar-settings-section">
-              {section.label && <div class="toolbar-settings-section-label">{section.label}</div>}
-              <div class="toolbar-settings-list">
-                {section.items.map((item) => {
-                  const checked = prefs[item.key];
-                  return (
-                    <button
-                      key={item.key}
-                      class={`toolbar-settings-item${checked ? ' checked' : ''}`}
-                      type="button"
-                      role="menuitemcheckbox"
-                      aria-checked={checked}
-                      onClick={() => onSetPrefs(toggleChatPref(prefs, item.key))}
-                    >
-                      <span class="toolbar-settings-item-check" aria-hidden="true">
-                        <svg width="12" height="12" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style={checked ? '' : 'opacity:0'}>
-                          <polyline points="2.5,6.5 5,9 10.5,3.5" />
-                        </svg>
-                      </span>
-                      <span class="toolbar-settings-item-label">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function resizeComposerTextarea(textarea: HTMLTextAreaElement): void {
+  textarea.style.height = 'auto';
+  textarea.style.height = `${Math.min(textarea.scrollHeight, COMPOSER_TEXTAREA_MAX_HEIGHT)}px`;
 }
 
 interface ComposerProps {
@@ -142,6 +51,7 @@ interface ComposerProps {
   prefs: ChatPrefs;
   systemPrompts: SystemPromptEntry[];
   transcript: ChatMessage[];
+  transcriptWindow: TranscriptWindow;
   pendingComposerInputs: ComposerInput[];
   activeRunSummary?: ActiveRunSummary | null;
   focusTrigger?: string;
@@ -155,11 +65,7 @@ interface ComposerProps {
   onMarkComplete?: () => void;
 }
 
-function imagePreviewSrc(input: Extract<ComposerInput, { kind: 'imageBlob' }>): string {
-  return `data:${input.mimeType};base64,${input.dataBase64}`;
-}
-
-export function Composer({
+function ComposerView({
   busy,
   draftRestore,
   activeModelId,
@@ -170,6 +76,7 @@ export function Composer({
   prefs,
   systemPrompts,
   transcript,
+  transcriptWindow,
   pendingComposerInputs,
   activeRunSummary,
   focusTrigger,
@@ -187,6 +94,7 @@ export function Composer({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
+  const composerAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (focusTrigger !== undefined) {
@@ -203,8 +111,7 @@ export function Composer({
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.value = draftRestore.text;
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+      resizeComposerTextarea(textarea);
       textarea.focus();
     }
   }, [draftRestore?.nonce]);
@@ -223,15 +130,15 @@ export function Composer({
     selectedLevel,
     selectedModelInfo,
     supportsReasoning,
-  } = resolveComposerModelState({
+  } = useMemo(() => resolveComposerModelState({
     activeModelId,
     activeThinkingLevel,
     modelSettings,
     availableModels,
-  });
+  }), [activeModelId, activeThinkingLevel, availableModels, modelSettings]);
   const supportsImageInputs = selectedModelInfo?.inputKinds.includes('image') ?? false;
   const runControls = getComposerRunControls(activeRunSummary ?? null);
-  const hasUserMessages = transcript.some((msg) => msg.role === 'user');
+  const hasUserMessages = transcriptWindow.hasUserMessages;
   const completionAction = runControls.action;
 
   const applyComposerTransfer = useCallback(async (dataTransfer: DataTransfer | null, source: 'drop' | 'paste') => {
@@ -266,6 +173,10 @@ export function Composer({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendCurrentText();
@@ -277,8 +188,7 @@ export function Composer({
   const handleInput = useCallback((e: Event) => {
     const target = e.target as HTMLTextAreaElement;
     setText(target.value);
-    target.style.height = 'auto';
-    target.style.height = `${Math.min(target.scrollHeight, 160)}px`;
+    resizeComposerTextarea(target);
   }, []);
 
   const handlePaste = useCallback((event: ClipboardEvent) => {
@@ -341,8 +251,38 @@ export function Composer({
     void applyComposerTransfer(event.dataTransfer, 'drop');
   }, [applyComposerTransfer]);
 
+  // Keep a CSS variable updated with the composer area's height so the
+  // jump-to-latest button can be positioned above the composer without
+  // overlapping it. We set the variable on document.documentElement so the
+  // fixed-position button can read it.
+  useEffect(() => {
+    const el = composerAreaRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      try {
+        document.documentElement.style.setProperty('--composer-height', `${height}px`);
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    update();
+
+    // Use ResizeObserver to respond to textarea growth and other layout changes.
+    const ro = new (window as any).ResizeObserver(() => update());
+    ro.observe(el);
+    window.addEventListener('resize', update, { passive: true });
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
   const effectiveContextWindow = contextUsage?.contextWindow ?? selectedModelInfo?.contextWindow ?? 0;
-  const contextBreakdown =
+  const contextBreakdown = useMemo(() => (
     effectiveContextWindow <= 0
       ? null
       : buildContextWindowBreakdown({
@@ -350,84 +290,44 @@ export function Composer({
           effectiveContextWindow,
           systemPrompts,
           transcript,
-        });
-  const contextIndicator = contextBreakdown
-    ? buildContextWindowIndicatorState(contextBreakdown.summary)
-    : null;
-  const contextIndicatorClass = contextIndicator?.severity ? ` ${contextIndicator.severity}` : '';
+          isPartial: transcriptWindow.isPartial,
+        })
+  ), [contextUsage, effectiveContextWindow, systemPrompts, transcript, transcriptWindow.isPartial]);
+  const contextIndicator = useMemo(() => (
+    contextBreakdown
+      ? buildContextWindowIndicatorState(contextBreakdown.summary)
+      : null
+  ), [contextBreakdown]);
   const canSend = text.trim().length > 0 || pendingComposerInputs.length > 0;
-  const attachmentSummary = describeComposerInputSummary(pendingComposerInputs);
+  const attachmentSummary = useMemo(
+    () => describeComposerInputSummary(pendingComposerInputs),
+    [pendingComposerInputs],
+  );
   const showAttachmentSummary = pendingComposerInputs.length > 1;
   const composerPlaceholder = busy
     ? 'Waiting for a response...'
     : 'Ask PI anything...';
 
   return (
-    <div class="composer-area">
-      <div class="composer-toolbar">
-        <ComposerSettingsMenu prefs={prefs} onSetPrefs={onSetPrefs} />
-
-        {availableModels.length > 0 ? (
-          <select
-            class="model-select"
-            value={selectedModel}
-            onChange={(e) => {
-              const target = e.target as HTMLSelectElement;
-              onModelChange(target.value, selectedLevel);
-            }}
-            aria-label="Model"
-            title="Select model"
-          >
-            {availableModels.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        ) : selectedModel ? (
-          <span class="model-select-static" title={selectedModel}>{selectedModel}</span>
-        ) : null}
-
-        {supportsReasoning && (
-          <select
-            class="model-select model-select-sm"
-            value={selectedLevel}
-            onChange={(e) => {
-              const target = e.target as HTMLSelectElement;
-              onModelChange(selectedModel, target.value as ThinkingLevel);
-            }}
-            aria-label="Reasoning level"
-            title="Reasoning level"
-          >
-            {(Object.keys(THINKING_LEVEL_LABELS) as ThinkingLevel[]).map((level) => (
-              <option key={level} value={level}>{THINKING_LEVEL_LABELS[level]}</option>
-            ))}
-          </select>
-        )}
-
-        {contextIndicator?.label && contextBreakdown && (
-          <div class="context-window-indicator-anchor">
-            <span
-              class={`model-select-static context-window-indicator${contextIndicatorClass}`}
-              aria-label={contextIndicator.ariaLabel}
-              aria-description={contextBreakdown.title}
-              title={contextBreakdown.title}
-            >
-              {contextIndicator.label}
-            </span>
-          </div>
-        )}
-
-        {runControls.status && (
-          <div class="composer-run-controls">
-            <span
-              class={`composer-meta-chip ${runControls.status.tone}`}
-              title={runControls.status.title}
-            >
-              {runControls.status.text}
-            </span>
-          </div>
-        )}
-
-      </div>
+    <div class="composer-area" ref={composerAreaRef}>
+      <ComposerToolbar
+        prefs={prefs}
+        onSetPrefs={onSetPrefs}
+        availableModels={availableModels}
+        selectedModel={selectedModel}
+        selectedLevel={selectedLevel}
+        supportsReasoning={supportsReasoning}
+        contextIndicator={contextIndicator
+          ? {
+              label: contextIndicator.label,
+              ariaLabel: contextIndicator.ariaLabel,
+              severity: contextIndicator.severity ?? null,
+            }
+          : null}
+        contextBreakdownTitle={contextBreakdown?.title ?? null}
+        runStatus={runControls.status}
+        onModelChange={onModelChange}
+      />
 
       <div
         ref={composerShellRef}
@@ -436,48 +336,12 @@ export function Composer({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {pendingComposerInputs.length > 0 && (
-          <div class="composer-attachments" role="group" aria-label={`Pending attachments: ${attachmentSummary}`}>
-            {showAttachmentSummary && <span class="composer-attachments-summary">{attachmentSummary}</span>}
-            <div class="composer-attachments-strip">
-              {pendingComposerInputs.map((input) => {
-                const displayName = composerInputDisplayName(input);
-                const detail = composerInputDetail(input);
-
-                return (
-                  <div key={input.id} class="attachment-card" title={composerInputTitle(input)}>
-                    {input.kind === 'imageBlob' ? (
-                      <div class="attachment-card-thumb">
-                        <img class="attachment-card-image" src={imagePreviewSrc(input)} alt={displayName} />
-                      </div>
-                    ) : (
-                      <div class="attachment-card-icon" aria-hidden="true">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 3v5h5" />
-                          <path d="M9 13h6" />
-                          <path d="M9 17h4" />
-                        </svg>
-                      </div>
-                    )}
-                    <div class="attachment-card-meta">
-                      <span class="attachment-card-name">{displayName}</span>
-                      <span class="attachment-card-detail">{detail}</span>
-                    </div>
-                    <button
-                      class="attachment-card-remove"
-                      type="button"
-                      onClick={() => onRemoveInput(input.id)}
-                      aria-label={`Remove ${displayName}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <ComposerAttachments
+          pendingComposerInputs={pendingComposerInputs}
+          attachmentSummary={attachmentSummary}
+          showAttachmentSummary={showAttachmentSummary}
+          onRemoveInput={onRemoveInput}
+        />
         <textarea
           ref={textareaRef}
           class="composer-textarea"
@@ -544,3 +408,5 @@ export function Composer({
     </div>
   );
 }
+
+export const Composer = memo(ComposerView);

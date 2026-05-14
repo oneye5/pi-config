@@ -1,13 +1,19 @@
-import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 
 import * as vscode from 'vscode';
 
+import {
+  buildWorkspaceAnalyticsId,
+  getDataOutcomesRootPath,
+  getDefaultRunAnalyticsExportPath,
+} from './analytics-storage';
 import { BackendClient } from './backend-client';
 import {
   requestWindowAttention,
   shouldShowCompletionNotification,
   type SessionCompletionEvent,
 } from './completion-notification';
+import { type RunAnalyticsExportPayload } from './run-analytics-query';
 import { selectActiveSessionPath, selectViewState, store } from './store';
 import { SidebarViewProvider } from './sidebar-provider';
 import { SessionService } from './session-service';
@@ -16,22 +22,46 @@ import type { WebviewToHostMessage } from '../shared/protocol';
 
 export const SIDEBAR_VIEW_TYPE = 'pie.sessionsView';
 
-function getDataOutcomesRootPath(context: vscode.ExtensionContext): string {
-  const configuredRoot = process.env.PI_CODING_AGENT_DIR?.trim();
-  return configuredRoot
-    ? path.join(configuredRoot, 'data', 'outcomes')
-    : path.join(context.globalStorageUri.fsPath, 'data', 'outcomes');
+const NO_WORKSPACE_ANALYTICS_ID_KEY = 'pie.analytics.noWorkspaceId';
+
+function getWorkspaceAnalyticsId(context: vscode.ExtensionContext): string {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  const workspaceFile = vscode.workspace.workspaceFile;
+
+  if (workspaceFolders?.length || workspaceFile) {
+    return buildWorkspaceAnalyticsId({
+      workspaceFolders,
+      workspaceFile,
+      noWorkspaceId: 'workspace',
+    });
+  }
+
+  const existingNoWorkspaceId = context.workspaceState.get<string>(NO_WORKSPACE_ANALYTICS_ID_KEY)?.trim();
+  const noWorkspaceId = existingNoWorkspaceId || crypto.randomUUID();
+
+  if (!existingNoWorkspaceId) {
+    void context.workspaceState.update(NO_WORKSPACE_ANALYTICS_ID_KEY, noWorkspaceId);
+  }
+
+  return buildWorkspaceAnalyticsId({
+    workspaceFolders,
+    workspaceFile,
+    noWorkspaceId,
+  });
 }
 
-function getWorkspaceAnalyticsId(): string {
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders && folders.length > 0) {
-    return folders
-      .map((folder) => folder.uri.toString())
-      .sort((left, right) => left.localeCompare(right))
-      .join('|');
+function getLegacyWorkspaceAnalyticsIds(): string[] {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (workspaceFolders?.length) {
+    return [
+      workspaceFolders
+        .map((folder) => folder.uri.toString())
+        .sort((left, right) => left.localeCompare(right))
+        .join('|'),
+    ];
   }
-  return vscode.workspace.name ?? 'no-workspace';
+
+  return [vscode.workspace.name ?? 'no-workspace'];
 }
 
 export class PieExtension implements vscode.Disposable {
@@ -45,12 +75,16 @@ export class PieExtension implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly backend: BackendClient,
   ) {
-    const dataOutcomesRootPath = getDataOutcomesRootPath(context);
+    const dataOutcomesRootPath = getDataOutcomesRootPath(
+      process.env.PI_CODING_AGENT_DIR,
+      context.globalStorageUri.fsPath,
+    );
 
     this.statsService = new StatsService({
       dataOutcomesRootPath,
       legacyUsageDataRootPath: context.globalStorageUri.fsPath,
-      workspaceId: getWorkspaceAnalyticsId(),
+      workspaceId: getWorkspaceAnalyticsId(context),
+      legacyWorkspaceIds: getLegacyWorkspaceAnalyticsIds(),
       scheduleRender: () => this.scheduleRender(),
       getExperimentAssignment: () => this.getExperimentAssignment(),
     });
@@ -108,6 +142,11 @@ export class PieExtension implements vscode.Disposable {
       vscode.commands.registerCommand('pie.restartBackend', async () => {
         await this.restart();
       }),
+      vscode.commands.registerCommand('pie.exportRunAnalytics', async (
+        target?: vscode.Uri | string,
+      ) => {
+        return await this.exportRunAnalytics(target);
+      }),
       vscode.commands.registerCommand('pie.attachFiles', async (
         resource?: vscode.Uri,
         resources?: vscode.Uri[],
@@ -158,6 +197,46 @@ export class PieExtension implements vscode.Disposable {
       targets.map((uri) => uri.fsPath),
       source,
     );
+  }
+
+  private async exportRunAnalytics(
+    target?: vscode.Uri | string,
+  ): Promise<RunAnalyticsExportPayload | undefined> {
+    const shouldNotify = !target;
+    const resolvedTarget = typeof target === 'string'
+      ? vscode.Uri.file(target)
+      : target ?? await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(getDefaultRunAnalyticsExportPath(
+          process.env.PI_CODING_AGENT_DIR,
+          this.context.globalStorageUri.fsPath,
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
+        )),
+        filters: {
+          JSON: ['json'],
+        },
+        saveLabel: 'Export Run Analytics',
+        title: 'Export pie run analytics',
+      });
+
+    if (!resolvedTarget) {
+      return undefined;
+    }
+
+    try {
+      const payload = await this.statsService.exportRunAnalytics(resolvedTarget.fsPath);
+      if (shouldNotify) {
+        void vscode.window.showInformationMessage(
+          `pie: Exported run analytics to ${resolvedTarget.fsPath}`,
+        );
+      }
+      return payload;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (shouldNotify) {
+        void vscode.window.showErrorMessage(`pie: Failed to export run analytics: ${message}`);
+      }
+      throw error;
+    }
   }
 
   private scheduleRender(): void {
@@ -273,19 +352,35 @@ export class PieExtension implements vscode.Disposable {
 
       case 'newSession':
         this.service.createNewSession();
+        this.sidebarProvider.postState();
         return;
 
       case 'openSession':
         this.service.openSession(msg.sessionPath);
         this.sidebarProvider.reveal();
+        this.sidebarProvider.postState();
         return;
 
       case 'closeSession':
         await this.service.closeSession(msg.sessionPath);
+        this.sidebarProvider.postState();
         return;
 
       case 'moveSessionTab':
         this.service.moveSessionTab(msg.sessionPath, msg.fromIndex, msg.toIndex);
+        this.sidebarProvider.postState();
+        return;
+
+      case 'loadOlderTranscript':
+        await this.service.loadOlderTranscript(msg.sessionPath);
+        return;
+
+      case 'loadNewerTranscript':
+        await this.service.loadNewerTranscript(msg.sessionPath);
+        return;
+
+      case 'jumpToLatestTranscript':
+        await this.service.jumpToLatestTranscript(msg.sessionPath);
         return;
 
       case 'recordOutcome':

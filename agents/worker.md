@@ -18,9 +18,6 @@ Working rules:
 
 Output format:
 
-## Completed
-- What you changed.
-
 ## Files Changed
 - `path/to/file.ts` - summary
 - `path/to/other.ts` - summary

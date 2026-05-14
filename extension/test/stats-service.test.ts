@@ -4,6 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  RUN_ANALYTICS_SCHEMA_VERSION,
+  createEmptyFileMutationRollup,
+  createEmptyToolUsageRollup,
+  createEmptyVerificationRollup,
+  type RunSnapshot,
+} from '../src/host/run-analytics-types';
 import { StatsService } from '../src/host/stats-service';
 import { workspaceHash } from '../src/host/stats-service-helpers';
 import { createAppStore, sessionStateActions, sessionsActions, settingsActions } from '../src/host/store';
@@ -32,6 +39,42 @@ async function readJsonl(filePath: string): Promise<unknown[]> {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line));
+}
+
+function createOpenRunSnapshot(sessionPath: string, runId: string): RunSnapshot {
+  return {
+    sessionPath,
+    runId,
+    taskGroupId: `${runId}-task`,
+    status: 'open',
+    scored: false,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    mixedModelConfig: false,
+    mixedTreatmentConfig: false,
+    treatmentChangeKinds: [],
+    experimentAssignment: null,
+    analyticsFactors: null,
+    sendCount: 0,
+    assistantTurnCount: 0,
+    assistantTurnDurationMs: 0,
+    busyDurationMs: 0,
+    busyPeriodCount: 0,
+    interruptedCount: 0,
+    messageEditCount: 0,
+    truncatedAfterCount: 0,
+    backendErrorCodes: [],
+    contextTokens: null,
+    contextLimit: null,
+    filesystemPathRefCount: 0,
+    imageInputCount: 0,
+    imageInputBytes: 0,
+    unsupportedInputCount: 0,
+    inputKindsUsed: [],
+    toolUsage: createEmptyToolUsageRollup(),
+    fileMutation: createEmptyFileMutationRollup(),
+    verification: createEmptyVerificationRollup(),
+  };
 }
 
 test('StatsService records run outcomes and persists snapshot metrics', async () => {
@@ -574,7 +617,7 @@ test('StatsService captures structured analytics factors and experiment assignme
         toolSnippetHashes: [{ toolId: 'bash', hash: 'snippet-hash' }],
         toolSetHash: 'tool-set-hash',
         skills: [{
-          name: 'verification-before-completion',
+          name: 'frontend-design',
           contentHash: 'skill-hash',
           sourceHash: 'skill-source-hash',
           disableModelInvocation: false,
@@ -819,5 +862,491 @@ test('StatsService tracks busy durations and mixed treatment changes', async () 
     assert.equal(snapshotEntries[0].run.busyPeriodCount, 2);
     assert.equal(snapshotEntries[0].run.mixedTreatmentConfig, true);
     assert.deepEqual(snapshotEntries[0].run.treatmentChangeKinds, ['prompt', 'experimentAssignment']);
+  });
+});
+
+test('StatsService migrates legacy runs analytics files into data/outcomes', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-runs-migration';
+    const legacyStorageDir = path.join(tempDir, 'runs', workspaceHash(workspaceId));
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(legacyStorageDir, 'legacy-runs-marker.txt'), 'legacy-runs');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    const storageDir = await getRunStorageDir(tempDir);
+    assert.equal(await fs.readFile(path.join(storageDir, 'legacy-runs-marker.txt'), 'utf8'), 'legacy-runs');
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService migrates repo-local usage-data roots for legacy workspace hashes', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const currentWorkspaceId = 'workspace-current-hash';
+    const legacyWorkspaceId = 'workspace-legacy-hash';
+    const storageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      workspaceHash(currentWorkspaceId),
+    );
+    const legacyStorageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      'usage-data',
+      workspaceHash(legacyWorkspaceId),
+    );
+
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(legacyStorageDir, 'legacy-alias-marker.txt'), 'legacy-alias');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: path.join(tempDir, 'global-storage'),
+      workspaceId: currentWorkspaceId,
+      legacyWorkspaceIds: [legacyWorkspaceId],
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    assert.equal(await fs.readFile(path.join(storageDir, 'legacy-alias-marker.txt'), 'utf8'), 'legacy-alias');
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService migrates legacy canonical roots for legacy workspace hashes', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const currentWorkspaceId = 'workspace-current-canonical-hash';
+    const legacyWorkspaceId = 'workspace-legacy-canonical-hash';
+    const storageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      workspaceHash(currentWorkspaceId),
+    );
+    const legacyStorageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      workspaceHash(legacyWorkspaceId),
+    );
+
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(legacyStorageDir, 'legacy-canonical-marker.txt'), 'legacy-canonical');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: path.join(tempDir, 'global-storage'),
+      workspaceId: currentWorkspaceId,
+      legacyWorkspaceIds: [legacyWorkspaceId],
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    assert.equal(
+      await fs.readFile(path.join(storageDir, 'legacy-canonical-marker.txt'), 'utf8'),
+      'legacy-canonical',
+    );
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService migrates legacy global data/outcomes roots for legacy workspace hashes', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const currentWorkspaceId = 'workspace-current-global-outcomes';
+    const legacyWorkspaceId = 'workspace-legacy-global-outcomes';
+    const storageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      workspaceHash(currentWorkspaceId),
+    );
+    const legacyStorageDir = path.join(
+      tempDir,
+      'global-storage',
+      'data',
+      'outcomes',
+      workspaceHash(legacyWorkspaceId),
+    );
+
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(legacyStorageDir, 'legacy-global-outcomes-marker.txt'), 'legacy-global-outcomes');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: path.join(tempDir, 'global-storage'),
+      workspaceId: currentWorkspaceId,
+      legacyWorkspaceIds: [legacyWorkspaceId],
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    assert.equal(
+      await fs.readFile(path.join(storageDir, 'legacy-global-outcomes-marker.txt'), 'utf8'),
+      'legacy-global-outcomes',
+    );
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService prefers newer snapshots across overlapping legacy roots', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-legacy-root-priority';
+    const workspaceDir = workspaceHash(workspaceId);
+    const storageDir = path.join(tempDir, 'data', 'outcomes', workspaceDir);
+    const globalRunsDir = path.join(tempDir, 'global-storage', 'runs', workspaceDir);
+    const repoUsageDataDir = path.join(tempDir, 'data', 'outcomes', 'usage-data', workspaceDir);
+    const staleSnapshot = {
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      kind: 'run_snapshot',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+      run: {
+        ...createOpenRunSnapshot('/workspace/root-priority.jsonl', 'shared-root-run'),
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    };
+    const newerSnapshot = {
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      kind: 'run_snapshot',
+      recordedAt: '2026-01-03T00:00:00.000Z',
+      run: {
+        ...createOpenRunSnapshot('/workspace/root-priority.jsonl', 'shared-root-run'),
+        updatedAt: '2026-01-03T00:00:00.000Z',
+      },
+    };
+
+    await fs.mkdir(globalRunsDir, { recursive: true });
+    await fs.mkdir(repoUsageDataDir, { recursive: true });
+    await fs.writeFile(
+      path.join(globalRunsDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify(staleSnapshot)}\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(repoUsageDataDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify(newerSnapshot)}\n`,
+      'utf8',
+    );
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: path.join(tempDir, 'global-storage'),
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    const snapshotEntries = await readJsonl(path.join(storageDir, 'run-snapshots.jsonl')) as Array<{
+      run: { updatedAt: string };
+    }>;
+    assert.equal(snapshotEntries.length, 1);
+    assert.equal(snapshotEntries[0].run.updatedAt, '2026-01-03T00:00:00.000Z');
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService merges overlapping legacy snapshot history instead of skipping existing files', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-overlapping-log-merge';
+    const workspaceDir = workspaceHash(workspaceId);
+    const storageDir = path.join(tempDir, 'data', 'outcomes', workspaceDir);
+    const legacyStorageDir = path.join(tempDir, 'runs', workspaceDir);
+
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(
+      path.join(storageDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify({ source: 'current' })}\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(legacyStorageDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify({ source: 'legacy' })}\n`,
+      'utf8',
+    );
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    const snapshotEntries = await readJsonl(path.join(storageDir, 'run-snapshots.jsonl'));
+    assert.deepEqual(snapshotEntries, [
+      { source: 'legacy' },
+      { source: 'current' },
+    ]);
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService keeps canonical snapshot entries when the same run exists in legacy history', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-conflicting-log-merge';
+    const workspaceDir = workspaceHash(workspaceId);
+    const storageDir = path.join(tempDir, 'data', 'outcomes', workspaceDir);
+    const legacyStorageDir = path.join(tempDir, 'runs', workspaceDir);
+    const currentSnapshot = {
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      kind: 'run_snapshot',
+      recordedAt: '2026-01-02T00:00:00.000Z',
+      run: {
+        ...createOpenRunSnapshot('/workspace/shared-run.jsonl', 'shared-run'),
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+    };
+    const legacySnapshot = {
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      kind: 'run_snapshot',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+      run: {
+        ...createOpenRunSnapshot('/workspace/shared-run.jsonl', 'shared-run'),
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    };
+
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(
+      path.join(storageDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify(currentSnapshot)}\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(legacyStorageDir, 'run-snapshots.jsonl'),
+      `${JSON.stringify(legacySnapshot)}\n`,
+      'utf8',
+    );
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    const snapshotEntries = await readJsonl(path.join(storageDir, 'run-snapshots.jsonl')) as Array<{
+      run: { updatedAt: string };
+    }>;
+    assert.equal(snapshotEntries.length, 1);
+    assert.equal(snapshotEntries[0].run.updatedAt, '2026-01-02T00:00:00.000Z');
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService merges legacy checkpoint sessions with existing canonical checkpoint state', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-checkpoint-merge';
+    const workspaceDir = workspaceHash(workspaceId);
+    const storageDir = path.join(tempDir, 'data', 'outcomes', workspaceDir);
+    const legacyStorageDir = path.join(tempDir, 'runs', workspaceDir);
+    const currentSessionPath = '/workspace/current-open.jsonl';
+    const legacySessionPath = '/workspace/legacy-open.jsonl';
+
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(storageDir, 'open-runs.a.json'), JSON.stringify({
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      seq: 1,
+      sessions: {
+        [currentSessionPath]: {
+          currentRun: createOpenRunSnapshot(currentSessionPath, 'run-current'),
+          lastRun: null,
+          nextTaskIntent: null,
+          queuedUnsupportedInputCount: 0,
+          busyStartedAt: null,
+        },
+      },
+    }, null, 2), 'utf8');
+    await fs.writeFile(path.join(storageDir, 'open-runs.gen'), 'a', 'utf8');
+    await fs.writeFile(path.join(legacyStorageDir, 'open-runs.a.json'), JSON.stringify({
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      seq: 2,
+      sessions: {
+        [legacySessionPath]: {
+          currentRun: createOpenRunSnapshot(legacySessionPath, 'run-legacy'),
+          lastRun: null,
+          nextTaskIntent: null,
+          queuedUnsupportedInputCount: 0,
+          busyStartedAt: null,
+        },
+      },
+    }, null, 2), 'utf8');
+    await fs.writeFile(path.join(legacyStorageDir, 'open-runs.gen'), 'a', 'utf8');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    assert.deepEqual(store.getState().sessionState.activeRunSummaryBySession[currentSessionPath], {
+      runId: 'run-current',
+      status: 'open',
+      scored: false,
+    });
+    assert.deepEqual(store.getState().sessionState.activeRunSummaryBySession[legacySessionPath], {
+      runId: 'run-legacy',
+      status: 'open',
+      scored: false,
+    });
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService prefers the newer checkpoint state for overlapping session paths', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const workspaceId = 'workspace-checkpoint-conflict';
+    const workspaceDir = workspaceHash(workspaceId);
+    const storageDir = path.join(tempDir, 'data', 'outcomes', workspaceDir);
+    const legacyStorageDir = path.join(tempDir, 'runs', workspaceDir);
+    const sessionPath = '/workspace/conflicted-open.jsonl';
+
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.mkdir(legacyStorageDir, { recursive: true });
+    await fs.writeFile(path.join(storageDir, 'open-runs.a.json'), JSON.stringify({
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      seq: 1,
+      sessions: {
+        [sessionPath]: {
+          currentRun: createOpenRunSnapshot(sessionPath, 'run-current'),
+          lastRun: null,
+          nextTaskIntent: null,
+          queuedUnsupportedInputCount: 0,
+          busyStartedAt: null,
+        },
+      },
+    }, null, 2), 'utf8');
+    await fs.writeFile(path.join(storageDir, 'open-runs.gen'), 'a', 'utf8');
+    await fs.writeFile(path.join(legacyStorageDir, 'open-runs.a.json'), JSON.stringify({
+      schemaVersion: RUN_ANALYTICS_SCHEMA_VERSION,
+      seq: 2,
+      sessions: {
+        [sessionPath]: {
+          currentRun: {
+            ...createOpenRunSnapshot(sessionPath, 'run-legacy'),
+            updatedAt: '2026-01-02T00:00:00.000Z',
+          },
+          lastRun: null,
+          nextTaskIntent: null,
+          queuedUnsupportedInputCount: 0,
+          busyStartedAt: null,
+        },
+      },
+    }, null, 2), 'utf8');
+    await fs.writeFile(path.join(legacyStorageDir, 'open-runs.gen'), 'a', 'utf8');
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+    });
+
+    await stats.start();
+
+    assert.deepEqual(store.getState().sessionState.activeRunSummaryBySession[sessionPath], {
+      runId: 'run-legacy',
+      status: 'open',
+      scored: false,
+    });
+
+    await stats.shutdown();
+  });
+});
+
+test('StatsService tolerates auto-export write failures during startup and persistence', async () => {
+  await withTempDir(async (tempDir) => {
+    const store = createAppStore();
+    const sessionPath = '/workspace/session-export-failure.jsonl';
+    const workspaceId = 'workspace-export-failure';
+    const storageDir = path.join(
+      tempDir,
+      'data',
+      'outcomes',
+      workspaceHash(workspaceId),
+    );
+    let idCounter = 0;
+
+    store.dispatch(sessionsActions.upsertSession({
+      path: sessionPath,
+      name: 'Export Failure Session',
+      cwd: '/workspace',
+      modifiedAt: new Date().toISOString(),
+      messageCount: 0,
+      modelId: 'claude',
+    }));
+    store.dispatch(settingsActions.setModelSettings({
+      defaultModel: 'claude',
+      defaultThinkingLevel: 'medium',
+    }));
+
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.mkdir(path.join(storageDir, 'run-analytics.json'));
+
+    const stats = new StatsService({
+      dataOutcomesRootPath: path.join(tempDir, 'data', 'outcomes'),
+      legacyUsageDataRootPath: tempDir,
+      workspaceId,
+      dispatch: store.dispatch,
+      getState: store.getState,
+      createId: () => `id-${++idCounter}`,
+    });
+
+    await stats.start();
+    stats.prepareForSend(sessionPath, []);
+    await stats.shutdown();
+
+    const snapshotEntries = await readJsonl(path.join(storageDir, 'run-snapshots.jsonl')) as Array<{
+      run: { runId: string };
+    }>;
+    assert.equal(snapshotEntries.length, 1);
+    assert.equal(snapshotEntries[0].run.runId, 'id-1');
   });
 });

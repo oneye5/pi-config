@@ -214,8 +214,12 @@ $newSessions = Join-Path $outcomesRoot 'sessions'
 $legacySessionImports = @()
 $desiredSessionDir = 'data/outcomes/sessions'
 $defaultLegacySessions = Join-Path $env:USERPROFILE '.pi\agent\sessions'
+$legacyRepoLocalSessions = Join-Path $repoRoot 'data\sessions'
 if (Test-DirectoryHasJsonlFiles $defaultLegacySessions) {
   $legacySessionImports += @{ source = $defaultLegacySessions; recurse = $true }
+}
+if (Test-DirectoryHasJsonlFiles $legacyRepoLocalSessions) {
+  $legacySessionImports += @{ source = $legacyRepoLocalSessions; recurse = $true }
 }
 
 $settingsPath = Join-Path $repoRoot 'settings.json'

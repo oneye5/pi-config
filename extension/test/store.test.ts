@@ -289,6 +289,101 @@ test('transcriptActions.clearSessionState removes aliases owned by the session',
   assert.deepEqual(store.getState().transcript.messageIdAlias, {});
 });
 
+test('transcript window metadata keeps hasUserMessages true after removing a loaded user from a partial window', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+
+  store.dispatch(transcriptActions.setTranscript({
+    sessionPath: '/ws/partial',
+    transcript: [{
+      id: 'user-partial',
+      role: 'user',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      markdown: 'loaded user',
+      status: 'completed',
+    }],
+    transcriptWindow: {
+      totalCount: 10,
+      loadedStart: 5,
+      loadedEnd: 6,
+      hasOlder: true,
+      hasNewer: true,
+      isPartial: true,
+      hasUserMessages: true,
+    },
+  }));
+
+  store.dispatch(transcriptActions.removeMessage({ sessionPath: '/ws/partial', messageId: 'user-partial' }));
+
+  assert.equal(store.getState().transcript.windowBySession['/ws/partial']?.hasUserMessages, true);
+});
+
+test('transcript window metadata preserves hasNewer when appending local streaming rows', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+
+  store.dispatch(transcriptActions.setTranscript({
+    sessionPath: '/ws/newer',
+    transcript: [{
+      id: 'assistant-1',
+      role: 'assistant',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      markdown: 'existing',
+      status: 'completed',
+    }],
+    transcriptWindow: {
+      totalCount: 20,
+      loadedStart: 10,
+      loadedEnd: 11,
+      hasOlder: true,
+      hasNewer: true,
+      isPartial: true,
+      hasUserMessages: true,
+    },
+  }));
+
+  store.dispatch(transcriptActions.ensureAssistantMessage({
+    sessionPath: '/ws/newer',
+    messageId: 'assistant-2',
+    requestId: 'req-newer',
+  }));
+
+  assert.equal(store.getState().transcript.windowBySession['/ws/newer']?.hasNewer, true);
+});
+
+test('trimTranscriptForInactivity keeps window metadata while dropping loaded rows', () => {
+  const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
+  const store = createAppStore();
+
+  store.dispatch(transcriptActions.setTranscript({
+    sessionPath: '/ws/evict',
+    transcript: [
+      { id: 'user-1', role: 'user', createdAt: '', markdown: 'one', status: 'completed' },
+      { id: 'assistant-1', role: 'assistant', createdAt: '', markdown: 'two', status: 'completed' },
+    ],
+    transcriptWindow: {
+      totalCount: 30,
+      loadedStart: 28,
+      loadedEnd: 30,
+      hasOlder: true,
+      hasNewer: false,
+      isPartial: true,
+      hasUserMessages: true,
+    },
+  }));
+
+  store.dispatch(transcriptActions.trimTranscriptForInactivity({
+    sessionPath: '/ws/evict',
+    keepTailCount: 1,
+    dropAll: true,
+  }));
+
+  assert.deepEqual(store.getState().transcript.bySession['/ws/evict'], []);
+  const windowState = store.getState().transcript.windowBySession['/ws/evict'];
+  assert.equal(windowState?.loadedStart, 30);
+  assert.equal(windowState?.hasOlder, true);
+});
+
 // ---------------------------------------------------------------------------
 // Settings slice tests
 // ---------------------------------------------------------------------------

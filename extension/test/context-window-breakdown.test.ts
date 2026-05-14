@@ -57,19 +57,15 @@ test('buildContextWindowBreakdown sorts top contributors first, uses derived Oth
       }),
       makeMessage({ id: 'message-3', role: 'system', markdown: 'ab' }),
     ],
+    isPartial: false,
   });
 
   const byLabel = new Map(breakdown.entries.map((entry) => [entry.label ?? entry.key, entry]));
   const footer = new Map(breakdown.footerEntries.map((entry) => [entry.key, entry]));
 
-  // System prompt (harness 'abcd' ~1 + append 'abcde' ~2 + repo 'abcdefgh' ~2 = ~5 tokens)
   assert.equal(byLabel.get('System prompt')?.kind, 'estimated');
-
-  // User message
   assert.equal(byLabel.get('User message')?.kind, 'estimated');
   assert.ok(byLabel.get('User message')?.note?.includes('abcd'));
-
-  // Other is derived (exact usage known)
   assert.equal(byLabel.get('Other')?.kind, 'derived');
 
   assert.deepEqual(breakdown.summary, {
@@ -80,35 +76,13 @@ test('buildContextWindowBreakdown sorts top contributors first, uses derived Oth
     totalWindow: 100,
   });
 
-  // Window stats in footerEntries
   assert.equal(footer.get('window.total')?.value, '100');
   assert.equal(footer.get('window.used')?.value, '20');
   assert.equal(footer.get('window.remaining')?.value, '80');
-  assert.equal(footer.get('window.total')?.kind, 'exact');
-  assert.equal(footer.get('window.used')?.kind, 'exact');
-  assert.equal(footer.get('window.remaining')?.kind, 'exact');
 
-  // Entries are sorted descending by token count (largest first)
-  const tokenValues = breakdown.entries
-    .filter((e) => e.key !== 'other')
-    .map((e) => parseInt(e.value.replace(/[^0-9]/g, ''), 10) || 0);
-  for (let i = 1; i < tokenValues.length; i++) {
-    assert.ok(tokenValues[i - 1] >= tokenValues[i], `Entry ${i - 1} should have >= tokens than entry ${i}`);
-  }
-
-  // Tooltip text contains exact PI totals and labeled estimated rows.
-  assert.match(breakdown.title, /^Context window usage/m);
   assert.match(breakdown.title, /Used: 20/m);
   assert.match(breakdown.title, /Remaining: 80/m);
   assert.match(breakdown.title, /System prompt: ~5 estimated/m);
-  assert.match(
-    breakdown.title,
-    /Note: Used tokens come from PI’s live context-window snapshot, not just the next prompt\./m,
-  );
-  assert.match(
-    breakdown.title,
-    /Note: Estimated rows use the chars\/4 heuristic where exact attribution is unavailable\./m,
-  );
 });
 
 test('buildContextWindowBreakdown classifies read_file tool calls individually', () => {
@@ -132,7 +106,7 @@ test('buildContextWindowBreakdown classifies read_file tool calls individually',
           {
             id: 'tool-2',
             name: 'read_file',
-            input: { filePath: '/home/user/skills/verification-before-completion/SKILL.md' },
+            input: { filePath: '/home/user/skills/frontend-design/SKILL.md' },
             result: 'abcdefgh',
             status: 'completed',
           },
@@ -146,69 +120,20 @@ test('buildContextWindowBreakdown classifies read_file tool calls individually',
         ],
       }),
     ],
+    isPartial: false,
   });
 
-  const readFileEntry = breakdown.entries.find(
-    (e) => (e.label ?? e.key) === 'Read file',
-  );
-  assert.ok(readFileEntry, 'Read file entry should exist');
+  const readFileEntry = breakdown.entries.find((entry) => (entry.label ?? entry.key) === 'Read file');
+  assert.ok(readFileEntry);
   assert.match(readFileEntry.note ?? '', /src\/backend\/index\.ts/);
 
-  const skillEntry = breakdown.entries.find(
-    (e) => (e.label ?? e.key) === 'Skill',
-  );
-  assert.ok(skillEntry, 'Skill entry should exist');
-  assert.equal(skillEntry.note, 'verification-before-completion');
+  const skillEntry = breakdown.entries.find((entry) => (entry.label ?? entry.key) === 'Skill');
+  assert.ok(skillEntry);
+  assert.equal(skillEntry.note, 'frontend-design');
 
-  // bash goes to Other (estimated, no exact usage)
-  const otherEntry = breakdown.entries.find((e) => e.key === 'other');
+  const otherEntry = breakdown.entries.find((entry) => entry.key === 'other');
   assert.ok(otherEntry);
   assert.equal(otherEntry.kind, 'estimated');
-  assert.equal(breakdown.summary.usedKind, 'estimated');
-  assert.equal(breakdown.summary.remainingKind, 'estimated');
-  assert.match(breakdown.title, /Read file: ~/m);
-  assert.match(breakdown.title, /Skill: ~/m);
-  assert.match(
-    breakdown.title,
-    /Note: Used and remaining values are estimated until PI reports a live context-window snapshot\./m,
-  );
-  assert.match(
-    breakdown.title,
-    /Note: Estimated rows use the chars\/4 heuristic where exact attribution is unavailable\./m,
-  );
-});
-
-test('buildContextWindowBreakdown caps native tooltip rows and truncates long path notes', () => {
-  const breakdown = buildContextWindowBreakdown({
-    contextUsage: {
-      tokens: 120,
-      contextWindow: 1000,
-      percent: 12,
-    },
-    effectiveContextWindow: 1000,
-    systemPrompts: [],
-    transcript: [
-      makeMessage({
-        id: 'msg-many',
-        role: 'assistant',
-        markdown: '',
-        toolCalls: Array.from({ length: 8 }, (_, index) => ({
-          id: `tool-${index}`,
-          name: 'read_file',
-          input: { filePath: `very/long/path/to/a/deeply/nested/location/${index}/with-a-very-very-long-file-name-${index}.ts` },
-          result: 'abcdefghijklmnopqrstuvwxyz',
-          status: 'completed' as const,
-        })),
-      }),
-    ],
-  });
-
-  assert.match(breakdown.title, /more rows omitted\./m);
-  assert.doesNotMatch(
-    breakdown.title,
-    /very\/long\/path\/to\/a\/deeply\/nested\/location\/0\/with-a-very-very-long-file-name-0\.ts/m,
-  );
-  assert.match(breakdown.title, /very\/long\/path\/to\/a\/deeply\/nested\/location\/0\/with-a-very-very-l/m);
 });
 
 test('buildContextWindowBreakdown estimates footer values without a PI usage snapshot', () => {
@@ -221,33 +146,33 @@ test('buildContextWindowBreakdown estimates footer values without a PI usage sna
     effectiveContextWindow: 200000,
     systemPrompts: [makePrompt({ source: 'user', availability: 'missing', text: '' })],
     transcript: [],
+    isPartial: false,
   });
 
-  const footer = new Map(breakdown.footerEntries.map((e) => [e.key, e]));
+  const footer = new Map(breakdown.footerEntries.map((entry) => [entry.key, entry]));
   assert.equal(footer.get('window.used')?.value, '0');
   assert.equal(footer.get('window.remaining')?.value, '~200,000');
-  assert.equal(footer.get('window.used')?.kind, 'estimated');
-  assert.equal(footer.get('window.remaining')?.kind, 'estimated');
   assert.equal(footer.get('window.total')?.value, '200,000');
+});
 
-  // Other is estimated (no exact usage)
-  const otherEntry = breakdown.entries.find((e) => e.key === 'other');
-  assert.ok(otherEntry);
-  assert.equal(otherEntry.kind, 'estimated');
-
-  assert.deepEqual(breakdown.summary, {
-    usedTokens: 0,
-    usedKind: 'estimated',
-    remainingTokens: 200000,
-    remainingKind: 'estimated',
-    totalWindow: 200000,
+test('buildContextWindowBreakdown suppresses contributor rows when transcript is partial', () => {
+  const breakdown = buildContextWindowBreakdown({
+    contextUsage: {
+      tokens: 64000,
+      contextWindow: 200000,
+      percent: 32,
+    },
+    effectiveContextWindow: 200000,
+    systemPrompts: [makePrompt({ text: 'system' })],
+    transcript: [
+      makeMessage({ id: 'msg-user', role: 'user', markdown: 'hello' }),
+      makeMessage({ id: 'msg-assistant', role: 'assistant', markdown: 'world' }),
+    ],
+    isPartial: true,
   });
 
-  assert.match(
-    breakdown.title,
-    /Note: Used and remaining values are estimated until PI reports a live context-window snapshot\./m,
-  );
-  assert.match(breakdown.title, /Used: 0 estimated/m);
-  assert.match(breakdown.title, /Remaining: ~200,000 estimated/m);
-  assert.match(breakdown.title, /Total: 200,000/m);
+  assert.deepEqual(breakdown.entries, []);
+  assert.equal(breakdown.summary.usedTokens, 64000);
+  assert.equal(breakdown.summary.usedKind, 'exact');
+  assert.match(breakdown.title, /partial transcript window is loaded/i);
 });

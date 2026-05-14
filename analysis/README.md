@@ -1,0 +1,173 @@
+# pie analysis
+
+Standalone local analytics transforms, DuckDB queries, and static dashboard build for pie run analytics.
+
+## Purpose
+
+This package is a human-facing and agent-facing view over the existing local analytics store. It is **not** a second source of truth.
+
+Data flow:
+
+```text
+private source export or analytics store
+  -> sanitized intermediate model
+  -> DuckDB database + SQL queries
+  -> generated site-data JSON
+  -> static localhost dashboard
+```
+
+## Privacy boundary
+
+Raw `run-analytics.json` exports are **private source inputs only**.
+
+They may contain:
+
+- raw `sessionPath` values,
+- raw `analyticsFactors.contextFiles[].path` values,
+- workspace-derived identifiers.
+
+Generated site data under `analysis/site/data/` excludes those raw path fields by default and is the privacy boundary for the dashboard. Unexpected JSON files in that directory are treated as validation failures and are not served by the local dashboard server.
+
+## Install
+
+```bash
+cd analysis
+npm install
+```
+
+## Common commands
+
+Inside `analysis/`:
+
+```bash
+cd analysis
+npm run build-db
+npm run query -- --name model_quality
+npm run export-site-data
+npm run validate-site-data
+npm run build-site
+npm run serve
+npm run validate
+```
+
+From repo root (preferred shortcuts):
+
+```bash
+npm run analytics:build-db
+npm run analytics:query -- --name model_quality
+npm run analytics:export-site-data
+npm run analytics:validate-site-data
+npm run analytics:build-site
+npm run analytics:serve
+npm run analytics:validate
+```
+
+## Source inputs
+
+By default, source-building scripts use the committed fixture:
+
+- `analysis/fixtures/small-run-analytics.json`
+
+Notes:
+
+- `npm run build-db` and `npm run export-site-data` build from the fixture when no explicit source is provided (with a warning).
+- `npm run query` reuses an existing `analysis/data/usage.duckdb` when present.
+- `npm run validate-site-data` validates existing generated site data when present; otherwise it validates a temporary build from the selected source.
+- `npm run serve` auto-refreshes `analysis/site/data/` from your local run store by default (prefers the current workspace hash under `../data/outcomes/`).
+
+For real local data, use one of these explicit inputs:
+
+### Option 1: export from VS Code
+
+Use the command palette entry:
+
+- `pie: Export Run Analytics`
+
+Save the export to a git-ignored private path such as `analysis/data/exports/private-run-analytics.json`, then point analysis scripts at it:
+
+```bash
+cd analysis
+npm run export-site-data -- --export ./data/exports/private-run-analytics.json
+```
+
+### Option 2: read directly from a run store directory
+
+```bash
+cd analysis
+npm run build-db -- --storage-dir ../data/outcomes/<workspace-hash>
+npm run export-site-data -- --storage-dir ../data/outcomes/<workspace-hash>
+```
+
+## Generated outputs
+
+Private/generated outputs are git-ignored:
+
+- `analysis/data/usage.duckdb`
+- `analysis/data/exports/*.json`
+- `analysis/site/data/*.json`
+- `analysis/site/dist/*`
+
+Site-data files:
+
+- `manifest.json`
+- `overview.json`
+- `run-summary.json`
+- `model-quality.json`
+- `verification-impact.json`
+- `tool-usage.json`
+- `treatment-comparison.json`
+- `timeline.json`
+
+## Query names
+
+```text
+core_runs
+model_quality
+verification_impact
+tool_usage
+treatment_comparison
+timeline
+```
+
+Example:
+
+```bash
+cd analysis
+npm run query -- --name tool_usage --export ./data/exports/private-run-analytics.json
+```
+
+## Dashboard workflow
+
+```bash
+cd analysis
+npm run serve
+```
+
+`npm run serve` will:
+
+1. auto-detect your local run store under `../data/outcomes/`,
+2. regenerate privacy-safe `analysis/site/data/*.json`,
+3. start the localhost dashboard server.
+
+If multiple run stores exist and none matches the current workspace hash, `serve` will ask for an explicit source. You can always force one with:
+
+```bash
+npm run serve -- --storage-dir ../data/outcomes/<workspace-hash>
+npm run serve -- --export ./data/exports/private-run-analytics.json
+```
+
+Then open the localhost URL printed by the server.
+
+Do not rely on `file://` loading.
+
+## Manual smoke test
+
+1. Ensure you have local run data (use pie normally; optional: export manually with `pie: Export Run Analytics`).
+2. Run `npm run serve` and open the localhost URL.
+3. Optionally run `npm run validate-site-data` for an explicit contract check.
+4. Confirm:
+   - charts render,
+   - global filters update multiple charts,
+   - empty/no-scored subsets show useful messages,
+   - browser devtools show no CDN or third-party requests,
+   - raw session paths and raw context-file paths do not appear in JSON or UI.

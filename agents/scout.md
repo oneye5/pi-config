@@ -24,9 +24,3 @@ Output format:
 
 ## Findings
 - Key architecture, data flow, patterns, and likely change points.
-
-## Risks / Unknowns
-- Open questions, missing context, or places another agent should verify.
-
-## Start Here
-- `path/to/file.ts` - first file to open and why.

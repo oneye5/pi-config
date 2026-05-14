@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  validateLoadTranscriptPage,
   validateMessageSend,
   validateSessionCreate,
   validateSessionOpen,
@@ -85,6 +86,30 @@ test('validateSessionOpen accepts an optional selection token', () => {
   assert.deepEqual(
     validateSessionOpen({ sessionPath: '/workspace/session.jsonl', selectionToken: 'selection:2' }),
     { sessionPath: '/workspace/session.jsonl', selectionToken: 'selection:2' },
+  );
+});
+
+test('validateLoadTranscriptPage accepts direction and loaded range', () => {
+  assert.deepEqual(
+    validateLoadTranscriptPage({
+      sessionPath: '/workspace/session.jsonl',
+      direction: 'older',
+      loadedStart: 40,
+      loadedEnd: 120,
+    }),
+    {
+      sessionPath: '/workspace/session.jsonl',
+      direction: 'older',
+      loadedStart: 40,
+      loadedEnd: 120,
+    },
+  );
+});
+
+test('validateLoadTranscriptPage rejects invalid direction values', () => {
+  assert.throws(
+    () => validateLoadTranscriptPage({ sessionPath: '/workspace/session.jsonl', direction: 'backward' }),
+    /direction must be one of older, newer, latest/,
   );
 });
 

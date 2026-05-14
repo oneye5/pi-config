@@ -206,6 +206,15 @@ test('session.open triggers session.opened EventEnvelope', async () => {
     assert.equal(env.event, 'session.opened');
     assert.ok(env.payload.session, 'payload should include session');
     assert.ok(Array.isArray(env.payload.transcript), 'payload should include transcript');
+    assert.deepEqual(env.payload.transcriptWindow, {
+      totalCount: 0,
+      loadedStart: 0,
+      loadedEnd: 0,
+      hasOlder: false,
+      hasNewer: false,
+      isPartial: false,
+      hasUserMessages: false,
+    });
     assert.deepEqual(env.payload.contextUsage, {
       tokens: 64000,
       contextWindow: 200000,
@@ -232,7 +241,7 @@ test('session.open triggers session.opened EventEnvelope', async () => {
       toolSnippetHashes: [{ toolId: 'bash', hash: 'mock-tool-snippet-hash' }],
       toolSetHash: 'mock-tool-set-hash',
       skills: [{
-        name: 'verification-before-completion',
+        name: 'frontend-design',
         contentHash: 'mock-skill-hash',
         sourceHash: 'mock-skill-source-hash',
         disableModelInvocation: false,

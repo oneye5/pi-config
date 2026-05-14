@@ -6,7 +6,7 @@ Personal pi config stack: VS Code extension GUI ("pie"), custom pi extensions, a
 
 - `extension/` — VS Code extension (TypeScript + Preact webview)
 - `extensions/` — Custom pi tools: `subagent` (delegate to isolated pi processes), `cwd-skills` (auto-discovers `skills/` in cwd)
-- `agents/` — Agent definitions (worker, planner, reviewer, verifier, scout)
+- `agents/` — Agent definitions (worker, planner, reviewer, scout)
 - `skills/` — Pi skills
 - `settings.json` — Pi settings (model, sessionDir, packages) — tracked, don't commit local overrides
 - `APPEND_SYSTEM.md` — Appended to every agent system prompt

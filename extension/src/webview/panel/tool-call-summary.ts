@@ -374,11 +374,27 @@ function summarizeObject(value: Record<string, unknown>): string | null {
   return compact === '{}' ? null : compact;
 }
 
+function formatPresentationSizeHint(sizeHint: string | null | undefined): string | undefined {
+  if (!sizeHint) {
+    return undefined;
+  }
+
+  if (/^[~+-]/.test(sizeHint)) {
+    return sizeHint;
+  }
+
+  if (/\bline(?:s)?\b/i.test(sizeHint)) {
+    return `~${sizeHint}`;
+  }
+
+  return sizeHint;
+}
+
 export function getToolCallPresentation(
   toolCall: ToolCall,
   options: ToolCallPresentationOptions = {},
 ): ToolCallPresentation {
-  const sizeHint = getSharedToolCallSizeHint(toolCall);
+  const sizeHint = formatPresentationSizeHint(getSharedToolCallSizeHint(toolCall));
   const skillName = getSharedSkillNameFromToolCall(toolCall);
   if (skillName) {
     return {

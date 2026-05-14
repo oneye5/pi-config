@@ -22,7 +22,7 @@ These boundaries are already in place and should remain the basis for future wor
 |---|---|---|
 | Pending composer input state | Host | Host store |
 | Canonical conversation content | PI session history | Session JSONL |
-| Local run analytics | `StatsService` + `data/outcomes/usage-data/` | Local analytics store |
+| Local run analytics | `StatsService` + `data/outcomes/<workspace-hash>/` | Local analytics store |
 
 Implications:
 - Pending pasted images are **not** canonical transcript history until send succeeds.
@@ -54,7 +54,7 @@ These are here to keep future agents aligned with the current codebase rather th
   - run creation on send
   - outcome capture
   - task lineage controls
-  - JSONL persistence under `data/outcomes/usage-data/`
+  - JSONL persistence under `data/outcomes/<workspace-hash>/`
   - alternating-slot open-run checkpoint recovery
   - input counts, unsupported-input counts, edit counts, and truncate-after counts
   - mixed model/thinking config tracking

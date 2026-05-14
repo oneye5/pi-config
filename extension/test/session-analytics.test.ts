@@ -29,10 +29,10 @@ function makeSkill(filePath: string, name: string): SdkSkill {
 
 test('buildSessionAnalyticsFactors hashes structured prompt, tool, and skill inputs deterministically', async () => {
   await withTempDir(async (dir) => {
-    const skillDir = path.join(dir, 'skills', 'verification-before-completion');
+    const skillDir = path.join(dir, 'skills', 'frontend-design');
     await fs.mkdir(skillDir, { recursive: true });
     const skillFile = path.join(skillDir, 'SKILL.md');
-    await fs.writeFile(skillFile, '# Verification\n\nAlways verify.\n', 'utf8');
+    await fs.writeFile(skillFile, '# Frontend Design\n\nMake it distinctive.\n', 'utf8');
 
     const promptOptionsA: SdkBuildSystemPromptOptions = {
       cwd: dir,
@@ -48,7 +48,7 @@ test('buildSessionAnalyticsFactors hashes structured prompt, tool, and skill inp
         bash: 'Run verification commands',
         read: 'Inspect files',
       },
-      skills: [makeSkill(skillFile, 'verification-before-completion')],
+      skills: [makeSkill(skillFile, 'frontend-design')],
     };
 
     const promptOptionsB: SdkBuildSystemPromptOptions = {
@@ -78,7 +78,7 @@ test('buildSessionAnalyticsFactors hashes structured prompt, tool, and skill inp
     assert.equal(factorsA.promptHash.length, 64);
     assert.deepEqual(factorsA.selectedToolIds, ['bash', 'read']);
     assert.deepEqual(factorsA.toolSnippetHashes.map((entry) => entry.toolId), ['bash', 'read']);
-    assert.equal(factorsA.skills[0]?.name, 'verification-before-completion');
+    assert.equal(factorsA.skills[0]?.name, 'frontend-design');
     assert.equal(factorsA.skills[0]?.contentHash?.length, 64);
 
     assert.equal(factorsA.promptHash, factorsB.promptHash);

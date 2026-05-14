@@ -1,810 +1,33 @@
-import { configureStore, createSelector, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { configureStore, createSelector } from '@reduxjs/toolkit';
 
 import {
-  DEFAULT_CHAT_PREFS,
+  EMPTY_TRANSCRIPT_WINDOW,
   type ActiveRunSummary,
   type ChatMessage,
-  type ChatMessagePart,
-  type ChatPrefs,
   type ComposerInput,
   type ContextWindowUsage,
   type ModelInfo,
-  type ModelSettings,
-  type SessionAnalyticsFactors,
   type SessionSummary,
   type SystemPromptEntry,
-  type ToolCall,
-  type UserContentPart,
+  type TranscriptWindow,
   type ViewState,
 } from '../shared/protocol';
-import { moveOpenTabPath } from '../shared/tab-behavior';
-
-// ─── Sessions slice ───────────────────────────────────────────────────────────
-
-interface SessionsState {
-  sessions: SessionSummary[];
-  openTabPaths: string[];
-  runningSessionPaths: string[];
-  unreadFinishedSessionPaths: string[];
-  activeSessionPath: string | null;
-  workspaceCwd: string | null;
-}
-
-function removeSessionsMatching(
-  state: SessionsState,
-  predicate: (session: SessionSummary) => boolean,
-): void {
-  const removedPaths = new Set(
-    state.sessions.filter((session) => predicate(session)).map((session) => session.path),
-  );
-  if (removedPaths.size === 0) {
-    return;
-  }
-
-  state.sessions = state.sessions.filter((session) => !removedPaths.has(session.path));
-  state.openTabPaths = state.openTabPaths.filter((path) => !removedPaths.has(path));
-  state.runningSessionPaths = state.runningSessionPaths.filter((path) => !removedPaths.has(path));
-  state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths.filter((path) => !removedPaths.has(path));
-  if (state.activeSessionPath && removedPaths.has(state.activeSessionPath)) {
-    state.activeSessionPath = null;
-  }
-}
-
-/**
- * Merge an existing summary with an incoming one. We preserve a real local name
- * over a backend-emitted placeholder so that "New Session" doesn't clobber a
- * user-meaningful tab label after a list refresh.
- */
-function mergeSessionSummary(
-  existing: SessionSummary | undefined,
-  incoming: SessionSummary,
-): SessionSummary {
-  if (!existing) return incoming;
-  const keepExistingName =
-    !existing.isPlaceholder &&
-    incoming.isPlaceholder === true;
-  return {
-    ...incoming,
-    name: keepExistingName ? existing.name : incoming.name,
-    isPlaceholder: keepExistingName ? false : incoming.isPlaceholder,
-    modelId: incoming.modelId ?? existing.modelId,
-    thinkingLevel: incoming.thinkingLevel ?? existing.thinkingLevel,
-  };
-}
-
-const sessionsSlice = createSlice({
-  name: 'sessions',
-  initialState: {
-    sessions: [],
-    openTabPaths: [],
-    runningSessionPaths: [],
-    unreadFinishedSessionPaths: [],
-    activeSessionPath: null,
-    workspaceCwd: null,
-  } as SessionsState,
-  reducers: {
-    setWorkspaceCwd(state, action: PayloadAction<string | null>) {
-      state.workspaceCwd = action.payload;
-    },
-    setOpenTabPaths(state, action: PayloadAction<string[]>) {
-      state.openTabPaths = action.payload;
-      state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
-        .filter((path) => action.payload.includes(path));
-    },
-    ensureOpenTab(state, action: PayloadAction<string>) {
-      if (!state.openTabPaths.includes(action.payload)) {
-        state.openTabPaths = [...state.openTabPaths, action.payload];
-      }
-    },
-    removeOpenTab(state, action: PayloadAction<string>) {
-      state.openTabPaths = state.openTabPaths.filter((p) => p !== action.payload);
-      state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
-        .filter((path) => path !== action.payload);
-    },
-    replaceOpenTabPath(
-      state,
-      action: PayloadAction<{ oldPath: string; newPath: string }>,
-    ) {
-      const { oldPath, newPath } = action.payload;
-      state.openTabPaths = state.openTabPaths.map((p) => (p === oldPath ? newPath : p));
-      state.unreadFinishedSessionPaths = [
-        ...new Set(state.unreadFinishedSessionPaths
-          .map((path) => (path === oldPath ? newPath : path))),
-      ];
-    },
-    moveOpenTab(
-      state,
-      action: PayloadAction<{ sessionPath?: string; fromIndex: number; toIndex: number }>,
-    ) {
-      state.openTabPaths = moveOpenTabPath(state.openTabPaths, action.payload);
-    },
-    upsertSession(state, action: PayloadAction<SessionSummary>) {
-      const incoming = action.payload;
-      const idx = state.sessions.findIndex((s) => s.path === incoming.path);
-      const existing = idx === -1 ? undefined : state.sessions[idx];
-      const merged = mergeSessionSummary(existing, incoming);
-      if (idx === -1) {
-        state.sessions = [merged, ...state.sessions];
-      } else {
-        state.sessions[idx] = merged;
-      }
-    },
-    setSessionSummary(state, action: PayloadAction<SessionSummary>) {
-      const incoming = action.payload;
-      const idx = state.sessions.findIndex((s) => s.path === incoming.path);
-      if (idx === -1) {
-        state.sessions = [incoming, ...state.sessions];
-      } else {
-        state.sessions[idx] = incoming;
-      }
-    },
-    replaceSessionSummaries(state, action: PayloadAction<SessionSummary[]>) {
-      const mergedByPath = new Map<string, SessionSummary>();
-      for (const incoming of action.payload) {
-        const existing = mergedByPath.get(incoming.path) ?? state.sessions.find((s) => s.path === incoming.path);
-        mergedByPath.set(incoming.path, mergeSessionSummary(existing, incoming));
-      }
-      // Keep open-tab sessions not in the incoming list.
-      for (const s of state.sessions) {
-        if (!mergedByPath.has(s.path) && state.openTabPaths.includes(s.path)) {
-          mergedByPath.set(s.path, s);
-        }
-      }
-      // Keep the active session if it's not in the list.
-      const activeSession = state.activeSessionPath
-        ? state.sessions.find((session) => session.path === state.activeSessionPath)
-        : undefined;
-      if (activeSession && !mergedByPath.has(activeSession.path)) {
-        mergedByPath.set(activeSession.path, activeSession);
-      }
-      state.sessions = [...mergedByPath.values()];
-    },
-    removePendingSessions(state) {
-      removeSessionsMatching(state, (session) => session.path.startsWith('__pending__:'));
-    },
-    removeSession(state, action: PayloadAction<string>) {
-      removeSessionsMatching(state, (session) => session.path === action.payload);
-    },
-    setSessionRunning(state, action: PayloadAction<{ sessionPath: string; running: boolean }>) {
-      const { sessionPath, running } = action.payload;
-      const set = new Set(state.runningSessionPaths);
-      if (running) {
-        set.add(sessionPath);
-        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
-          .filter((path) => path !== sessionPath);
-      } else {
-        set.delete(sessionPath);
-      }
-      state.runningSessionPaths = [...set];
-    },
-    markSessionFinishedUnread(state, action: PayloadAction<string>) {
-      if (!state.unreadFinishedSessionPaths.includes(action.payload)) {
-        state.unreadFinishedSessionPaths = [...state.unreadFinishedSessionPaths, action.payload];
-      }
-    },
-    clearUnreadFinishedSessions(state) {
-      state.unreadFinishedSessionPaths = [];
-    },
-    clearRunningPaths(state) {
-      state.runningSessionPaths = [];
-    },
-    setActiveSessionPath(state, action: PayloadAction<string | null>) {
-      state.activeSessionPath = action.payload;
-      if (action.payload) {
-        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
-          .filter((path) => path !== action.payload);
-      }
-    },
-    setActiveSession(state, action: PayloadAction<SessionSummary | null>) {
-      state.activeSessionPath = action.payload?.path ?? null;
-      if (action.payload?.path) {
-        state.unreadFinishedSessionPaths = state.unreadFinishedSessionPaths
-          .filter((path) => path !== action.payload?.path);
-      }
-    },
-    clearActiveSession(state) {
-      state.activeSessionPath = null;
-    },
-  },
-});
-
-// ─── Transcript slice ─────────────────────────────────────────────────────────
-
-interface TranscriptState {
-  /** Per-session transcripts, keyed by session path. */
-  bySession: Record<string, ChatMessage[]>;
-  /** Per-session system prompts. */
-  systemPromptsBySession: Record<string, SystemPromptEntry[]>;
-  /** Maps aliased message IDs to canonical IDs (for multi-turn tool-use merging). */
-  messageIdAlias: Record<string, string>;
-  /** Tracks the first message ID of the active streaming turn per session. */
-  currentTurnBySession: Record<string, { requestId: string; firstMessageId: string }>;
-}
-
-function resolveAlias(aliasMap: Record<string, string>, messageId: string): string {
-  return aliasMap[messageId] ?? messageId;
-}
-
-function clearSessionAliases(state: TranscriptState, sessionPath: string): void {
-  const sessionMessageIds = new Set<string>();
-
-  for (const message of state.bySession[sessionPath] ?? []) {
-    sessionMessageIds.add(message.id);
-  }
-
-  const currentTurn = state.currentTurnBySession[sessionPath];
-  if (currentTurn) {
-    sessionMessageIds.add(currentTurn.firstMessageId);
-  }
-
-  if (sessionMessageIds.size === 0) {
-    return;
-  }
-
-  for (const [aliasId, canonicalId] of Object.entries(state.messageIdAlias)) {
-    if (sessionMessageIds.has(aliasId) || sessionMessageIds.has(canonicalId)) {
-      delete state.messageIdAlias[aliasId];
-    }
-  }
-}
-
-function cloneToolCall(toolCall: ToolCall): ToolCall {
-  return { ...toolCall };
-}
-
-function ensureAssistantParts(message: ChatMessage): ChatMessagePart[] {
-  if (message.parts) {
-    return message.parts;
-  }
-
-  const parts: ChatMessagePart[] = [];
-  if (message.thinking) {
-    parts.push({ kind: 'reasoning', text: message.thinking });
-  }
-  for (const toolCall of message.toolCalls ?? []) {
-    parts.push({ kind: 'toolCall', toolCall: cloneToolCall(toolCall) });
-  }
-  if (message.markdown) {
-    parts.push({ kind: 'text', text: message.markdown });
-  }
-
-  message.parts = parts;
-  return parts;
-}
-
-function withAssistantParts(message: ChatMessage): ChatMessage {
-  if (message.role !== 'assistant' || message.parts) {
-    return message;
-  }
-
-  const nextMessage = { ...message };
-  ensureAssistantParts(nextMessage);
-  return nextMessage;
-}
-
-function markdownFromUserParts(userParts: UserContentPart[] | undefined, fallbackText: string): string {
-  if (!userParts || userParts.length === 0) {
-    return fallbackText;
-  }
-
-  const text = userParts
-    .filter((part): part is Extract<UserContentPart, { kind: 'text' }> => part.kind === 'text')
-    .map((part) => part.text)
-    .join('');
-
-  return text || fallbackText;
-}
-
-function appendAssistantTextPart(
-  message: ChatMessage,
-  kind: 'text' | 'reasoning',
-  text: string,
-): void {
-  if (!text) {
-    return;
-  }
-
-  const parts = ensureAssistantParts(message);
-  const last = parts[parts.length - 1];
-  const currentAggregate = kind === 'text' ? message.markdown ?? '' : message.thinking ?? '';
-  const needsSeparator =
-    currentAggregate.endsWith('\n\n') &&
-    last?.kind === kind &&
-    !last.text.endsWith('\n\n');
-  const partText = needsSeparator ? `\n\n${text}` : text;
-
-  if (last?.kind === kind) {
-    last.text += partText;
-  } else {
-    parts.push({ kind, text: partText });
-  }
-
-  if (kind === 'text') {
-    message.markdown = (message.markdown ?? '') + text;
-  } else {
-    message.thinking = (message.thinking ?? '') + text;
-  }
-}
-
-function upsertAssistantToolCall(message: ChatMessage, toolCall: ToolCall): void {
-  const parts = ensureAssistantParts(message);
-  const nextToolCall = cloneToolCall(toolCall);
-  const existingToolCalls = message.toolCalls ?? [];
-  const toolIndex = existingToolCalls.findIndex((item) => item.id === nextToolCall.id);
-
-  if (toolIndex === -1) {
-    message.toolCalls = [...existingToolCalls, nextToolCall];
-  } else {
-    message.toolCalls = existingToolCalls.map((item) =>
-      item.id === nextToolCall.id ? nextToolCall : item,
-    );
-  }
-
-  const partIndex = parts.findIndex(
-    (part) => part.kind === 'toolCall' && part.toolCall.id === nextToolCall.id,
-  );
-  if (partIndex === -1) {
-    parts.push({ kind: 'toolCall', toolCall: nextToolCall });
-    return;
-  }
-
-  parts[partIndex] = { kind: 'toolCall', toolCall: nextToolCall };
-}
-
-function mergeContinuationToolCalls(message: ChatMessage, incoming: ChatMessage): void {
-  const incomingToolCalls = incoming.parts
-    ?.filter((part): part is Extract<ChatMessagePart, { kind: 'toolCall' }> => part.kind === 'toolCall')
-    .map((part) => part.toolCall)
-    ?? incoming.toolCalls
-    ?? [];
-
-  for (const toolCall of incomingToolCalls) {
-    upsertAssistantToolCall(message, toolCall);
-  }
-}
-
-function assistantToolCallsFromMessage(message: ChatMessage): ToolCall[] {
-  if (message.role !== 'assistant') {
-    return [];
-  }
-
-  const partToolCalls = message.parts
-    ?.filter((part): part is Extract<ChatMessagePart, { kind: 'toolCall' }> => part.kind === 'toolCall')
-    .map((part) => cloneToolCall(part.toolCall));
-
-  if (partToolCalls && partToolCalls.length > 0) {
-    return partToolCalls;
-  }
-
-  return (message.toolCalls ?? []).map((toolCall) => cloneToolCall(toolCall));
-}
-
-function mergeAssistantToolCallsPreservingResolvedState(target: ChatMessage, previous: ChatMessage): void {
-  if (target.role !== 'assistant' || previous.role !== 'assistant') {
-    return;
-  }
-
-  const currentById = new Map(assistantToolCallsFromMessage(target).map((toolCall) => [toolCall.id, toolCall]));
-
-  for (const previousToolCall of assistantToolCallsFromMessage(previous)) {
-    const currentToolCall = currentById.get(previousToolCall.id);
-
-    if (!currentToolCall) {
-      upsertAssistantToolCall(target, previousToolCall);
-      currentById.set(previousToolCall.id, previousToolCall);
-      continue;
-    }
-
-    const mergedToolCall: ToolCall = {
-      ...currentToolCall,
-      name: currentToolCall.name || previousToolCall.name,
-      input: currentToolCall.input !== undefined ? currentToolCall.input : previousToolCall.input,
-      result: currentToolCall.result !== undefined ? currentToolCall.result : previousToolCall.result,
-      status:
-        currentToolCall.status === 'failed' || previousToolCall.status !== 'failed'
-          ? currentToolCall.status
-          : previousToolCall.status,
-    };
-
-    upsertAssistantToolCall(target, mergedToolCall);
-    currentById.set(mergedToolCall.id, mergedToolCall);
-  }
-}
-
-const transcriptSlice = createSlice({
-  name: 'transcript',
-  initialState: {
-    bySession: {},
-    systemPromptsBySession: {},
-    messageIdAlias: {},
-    currentTurnBySession: {},
-  } as TranscriptState,
-  reducers: {
-    setTranscript(
-      state,
-      action: PayloadAction<{ sessionPath: string; transcript: ChatMessage[]; systemPrompts?: SystemPromptEntry[] }>,
-    ) {
-      clearSessionAliases(state, action.payload.sessionPath);
-      state.bySession[action.payload.sessionPath] = action.payload.transcript;
-      state.systemPromptsBySession[action.payload.sessionPath] =
-        action.payload.systemPrompts ?? [];
-      delete state.currentTurnBySession[action.payload.sessionPath];
-    },
-    clearTranscript(state, action: PayloadAction<string>) {
-      clearSessionAliases(state, action.payload);
-      delete state.bySession[action.payload];
-      delete state.systemPromptsBySession[action.payload];
-      delete state.currentTurnBySession[action.payload];
-    },
-    clearSessionState(state, action: PayloadAction<string>) {
-      clearSessionAliases(state, action.payload);
-      delete state.bySession[action.payload];
-      delete state.systemPromptsBySession[action.payload];
-      delete state.currentTurnBySession[action.payload];
-    },
-    ensureAssistantMessage(
-      state,
-      action: PayloadAction<{
-        sessionPath: string;
-        messageId: string;
-        requestId?: string;
-        modelId?: string;
-        thinkingLevel?: ChatMessage['thinkingLevel'];
-      }>,
-    ) {
-      const { sessionPath, messageId, requestId, modelId, thinkingLevel } = action.payload;
-      const list = (state.bySession[sessionPath] ??= []);
-      const existing = list.find((m) => m.id === messageId);
-      if (existing) {
-        if (modelId) existing.modelId = modelId;
-        if (thinkingLevel) existing.thinkingLevel = thinkingLevel;
-        return; // already exists
-      }
-
-      if (requestId) {
-        const currentTurn = state.currentTurnBySession[sessionPath];
-        if (currentTurn?.requestId === requestId) {
-          // Continuation of the same request — alias to the first message.
-          state.messageIdAlias[messageId] = currentTurn.firstMessageId;
-          // Prepend separator so the merged content reads naturally.
-          const canonical = list.find((m) => m.id === currentTurn.firstMessageId);
-          if (canonical) {
-            if (canonical.markdown) canonical.markdown += '\n\n';
-            if (canonical.thinking) canonical.thinking += '\n\n';
-            if (modelId) canonical.modelId = modelId;
-            if (thinkingLevel) canonical.thinkingLevel = thinkingLevel;
-          }
-          return;
-        }
-        state.currentTurnBySession[sessionPath] = { requestId, firstMessageId: messageId };
-      }
-
-      list.push({
-        id: messageId,
-        role: 'assistant',
-        createdAt: new Date().toISOString(),
-        markdown: '',
-        modelId,
-        thinkingLevel,
-        parts: [],
-        status: 'streaming',
-        toolCalls: [],
-      });
-    },
-    appendDelta(
-      state,
-      action: PayloadAction<{ sessionPath: string; messageId: string; delta: string }>,
-    ) {
-      const { sessionPath, delta } = action.payload;
-      const messageId = resolveAlias(state.messageIdAlias, action.payload.messageId);
-      const msg = state.bySession[sessionPath]?.find((m) => m.id === messageId);
-      if (msg) {
-        appendAssistantTextPart(msg, 'text', delta);
-        msg.status = 'streaming';
-      }
-    },
-    appendThinking(
-      state,
-      action: PayloadAction<{ sessionPath: string; messageId: string; thinking: string }>,
-    ) {
-      const { sessionPath, thinking } = action.payload;
-      const messageId = resolveAlias(state.messageIdAlias, action.payload.messageId);
-      const msg = state.bySession[sessionPath]?.find((m) => m.id === messageId);
-      if (msg) {
-        appendAssistantTextPart(msg, 'reasoning', thinking);
-        msg.status = 'streaming';
-      }
-    },
-    upsertToolCall(
-      state,
-      action: PayloadAction<{ sessionPath: string; messageId: string; toolCall: ToolCall }>,
-    ) {
-      const { sessionPath, toolCall } = action.payload;
-      const messageId = resolveAlias(state.messageIdAlias, action.payload.messageId);
-      const msg = state.bySession[sessionPath]?.find((m) => m.id === messageId);
-      if (msg) {
-        upsertAssistantToolCall(msg, toolCall);
-      }
-    },
-    upsertMessage(
-      state,
-      action: PayloadAction<{ sessionPath: string; message: ChatMessage }>,
-    ) {
-      const { sessionPath, message } = action.payload;
-      const normalizedMessage = withAssistantParts(message);
-      const list = (state.bySession[sessionPath] ??= []);
-      const canonicalId = resolveAlias(state.messageIdAlias, normalizedMessage.id);
-
-      if (canonicalId !== normalizedMessage.id) {
-        // Continuation message — merge only metadata into the canonical bubble.
-        // The markdown/thinking text was already accumulated via appendDelta/appendThinking.
-        const canonical = list.find((m) => m.id === canonicalId);
-        if (canonical) {
-          canonical.status = normalizedMessage.status;
-          if (normalizedMessage.modelId) {
-            canonical.modelId = normalizedMessage.modelId;
-          }
-          if (normalizedMessage.thinkingLevel) {
-            canonical.thinkingLevel = normalizedMessage.thinkingLevel;
-          }
-          if (normalizedMessage.durationMs !== undefined) {
-            canonical.durationMs = (canonical.durationMs ?? 0) + normalizedMessage.durationMs;
-          }
-          mergeContinuationToolCalls(canonical, normalizedMessage);
-        }
-        return;
-      }
-
-      const idx = list.findIndex((m) => m.id === normalizedMessage.id);
-      if (idx === -1) {
-        list.push(normalizedMessage);
-      } else {
-        const previousMessage = list[idx];
-        if (previousMessage) {
-          mergeAssistantToolCallsPreservingResolvedState(normalizedMessage, previousMessage);
-        }
-        list[idx] = normalizedMessage;
-      }
-    },
-    setMessageStatus(
-      state,
-      action: PayloadAction<{ sessionPath: string; messageId: string; status: ChatMessage['status'] }>,
-    ) {
-      const { sessionPath, status } = action.payload;
-      const messageId = resolveAlias(state.messageIdAlias, action.payload.messageId);
-      const msg = state.bySession[sessionPath]?.find((m) => m.id === messageId);
-      if (msg) msg.status = status;
-    },
-    appendLocalUserMessage(
-      state,
-      action: PayloadAction<{
-        sessionPath: string;
-        id: string;
-        text: string;
-        userParts?: UserContentPart[];
-      }>,
-    ) {
-      const { sessionPath, id, text, userParts } = action.payload;
-      const list = (state.bySession[sessionPath] ??= []);
-      list.push({
-        id,
-        role: 'user',
-        createdAt: new Date().toISOString(),
-        markdown: markdownFromUserParts(userParts, text),
-        userParts,
-        status: 'completed',
-      });
-    },
-    removeMessage(
-      state,
-      action: PayloadAction<{ sessionPath: string; messageId: string }>,
-    ) {
-      const { sessionPath, messageId } = action.payload;
-      const list = state.bySession[sessionPath];
-      if (!list) {
-        return;
-      }
-      state.bySession[sessionPath] = list.filter((message) => message.id !== messageId);
-    },
-  },
-});
-
-// ─── Settings slice ───────────────────────────────────────────────────────────
-
-interface SettingsState {
-  modelSettings: ModelSettings | null;
-  availableModelsBySession: Record<string, ModelInfo[]>;
-  contextUsageBySession: Record<string, ContextWindowUsage | null>;
-}
-
-const settingsSlice = createSlice({
-  name: 'settings',
-  initialState: {
-    modelSettings: null,
-    availableModelsBySession: {},
-    contextUsageBySession: {},
-  } as SettingsState,
-  reducers: {
-    setModelSettings(state, action: PayloadAction<ModelSettings>) {
-      state.modelSettings = action.payload;
-    },
-    setAvailableModels(
-      state,
-      action: PayloadAction<{ sessionPath: string; availableModels: ModelInfo[] }>,
-    ) {
-      const existing = state.availableModelsBySession[action.payload.sessionPath] ?? EMPTY_AVAILABLE_MODELS;
-      if (action.payload.availableModels.length > 0 || existing.length === 0) {
-        state.availableModelsBySession[action.payload.sessionPath] = action.payload.availableModels;
-      }
-    },
-    clearAvailableModels(state, action: PayloadAction<string>) {
-      delete state.availableModelsBySession[action.payload];
-    },
-    setModelAndAvailable(
-      state,
-      action: PayloadAction<{
-        sessionPath: string;
-        modelSettings: ModelSettings;
-        availableModels: ModelInfo[];
-      }>,
-    ) {
-      state.modelSettings = action.payload.modelSettings;
-      const existing = state.availableModelsBySession[action.payload.sessionPath] ?? EMPTY_AVAILABLE_MODELS;
-      if (action.payload.availableModels.length > 0 || existing.length === 0) {
-        state.availableModelsBySession[action.payload.sessionPath] = action.payload.availableModels;
-      }
-    },
-    setContextUsage(
-      state,
-      action: PayloadAction<{ sessionPath: string; contextUsage: ContextWindowUsage | null }>,
-    ) {
-      state.contextUsageBySession[action.payload.sessionPath] = action.payload.contextUsage;
-    },
-    clearContextUsage(state, action: PayloadAction<string>) {
-      delete state.contextUsageBySession[action.payload];
-    },
-  },
-});
-
-// ─── Session-scoped view state slice ──────────────────────────────────────────
-
-interface SessionStateViewState {
-  pendingComposerInputsBySession: Record<string, ComposerInput[]>;
-  activeRunSummaryBySession: Record<string, ActiveRunSummary | null>;
-  analyticsFactorsBySession: Record<string, SessionAnalyticsFactors | null>;
-}
-
-const sessionStateSlice = createSlice({
-  name: 'sessionState',
-  initialState: {
-    pendingComposerInputsBySession: {},
-    activeRunSummaryBySession: {},
-    analyticsFactorsBySession: {},
-  } as SessionStateViewState,
-  reducers: {
-    addPendingComposerInput(
-      state,
-      action: PayloadAction<{ sessionPath: string; input: ComposerInput }>,
-    ) {
-      const list = (state.pendingComposerInputsBySession[action.payload.sessionPath] ??= []);
-      list.push(action.payload.input);
-    },
-    setPendingComposerInputs(
-      state,
-      action: PayloadAction<{ sessionPath: string; inputs: ComposerInput[] }>,
-    ) {
-      state.pendingComposerInputsBySession[action.payload.sessionPath] = action.payload.inputs;
-    },
-    removePendingComposerInput(
-      state,
-      action: PayloadAction<{ sessionPath: string; inputId: string }>,
-    ) {
-      const list = state.pendingComposerInputsBySession[action.payload.sessionPath];
-      if (!list) {
-        return;
-      }
-
-      const nextInputs = list.filter((input) => input.id !== action.payload.inputId);
-      if (nextInputs.length > 0) {
-        state.pendingComposerInputsBySession[action.payload.sessionPath] = nextInputs;
-        return;
-      }
-
-      delete state.pendingComposerInputsBySession[action.payload.sessionPath];
-    },
-    clearPendingComposerInputs(state, action: PayloadAction<string>) {
-      delete state.pendingComposerInputsBySession[action.payload];
-    },
-    replaceSessionPath(
-      state,
-      action: PayloadAction<{ oldPath: string; newPath: string }>,
-    ) {
-      const { oldPath, newPath } = action.payload;
-      if (oldPath === newPath) {
-        return;
-      }
-
-      const oldInputs = state.pendingComposerInputsBySession[oldPath];
-      if (oldInputs) {
-        const existingInputs = state.pendingComposerInputsBySession[newPath] ?? [];
-        state.pendingComposerInputsBySession[newPath] = [...existingInputs, ...oldInputs];
-        delete state.pendingComposerInputsBySession[oldPath];
-      }
-
-      if (Object.prototype.hasOwnProperty.call(state.activeRunSummaryBySession, oldPath)) {
-        state.activeRunSummaryBySession[newPath] = state.activeRunSummaryBySession[oldPath] ?? null;
-        delete state.activeRunSummaryBySession[oldPath];
-      }
-
-      if (Object.prototype.hasOwnProperty.call(state.analyticsFactorsBySession, oldPath)) {
-        state.analyticsFactorsBySession[newPath] = state.analyticsFactorsBySession[oldPath] ?? null;
-        delete state.analyticsFactorsBySession[oldPath];
-      }
-    },
-    setActiveRunSummary(
-      state,
-      action: PayloadAction<{ sessionPath: string; summary: ActiveRunSummary | null }>,
-    ) {
-      if (action.payload.summary === null) {
-        delete state.activeRunSummaryBySession[action.payload.sessionPath];
-        return;
-      }
-
-      state.activeRunSummaryBySession[action.payload.sessionPath] = action.payload.summary;
-    },
-    setAnalyticsFactors(
-      state,
-      action: PayloadAction<{ sessionPath: string; factors: SessionAnalyticsFactors | null }>,
-    ) {
-      if (action.payload.factors === null) {
-        delete state.analyticsFactorsBySession[action.payload.sessionPath];
-        return;
-      }
-
-      state.analyticsFactorsBySession[action.payload.sessionPath] = action.payload.factors;
-    },
-    clearSessionState(state, action: PayloadAction<string>) {
-      delete state.pendingComposerInputsBySession[action.payload];
-      delete state.activeRunSummaryBySession[action.payload];
-      delete state.analyticsFactorsBySession[action.payload];
-    },
-  },
-});
-
-// ─── UI slice ─────────────────────────────────────────────────────────────────
-
-interface UiState {
-  notice: string | null;
-  backendReady: boolean;
-  prefs: ChatPrefs;
-}
-
-const uiSlice = createSlice({
-  name: 'ui',
-  initialState: { notice: null, backendReady: false, prefs: DEFAULT_CHAT_PREFS } as UiState,
-  reducers: {
-    setNotice(state, action: PayloadAction<string | null>) {
-      state.notice = action.payload;
-    },
-    setBackendReady(state, action: PayloadAction<boolean>) {
-      state.backendReady = action.payload;
-    },
-    setPrefs(state, action: PayloadAction<Partial<ChatPrefs>>) {
-      state.prefs = { ...state.prefs, ...action.payload };
-    },
-  },
-});
+import { sessionStateActions, sessionStateReducer } from './store/session-state-slice';
+import { settingsActions, settingsReducer } from './store/settings-slice';
+import { sessionsActions, sessionsReducer } from './store/sessions-slice';
+import { transcriptActions, transcriptReducer } from './store/transcript-slice';
+import { uiActions, uiReducer } from './store/ui-slice';
 
 // ─── Store ─────────────────────────────────────────────────────────────────────
 
 export function createAppStore() {
   return configureStore({
     reducer: {
-      sessions: sessionsSlice.reducer,
-      transcript: transcriptSlice.reducer,
-      settings: settingsSlice.reducer,
-      sessionState: sessionStateSlice.reducer,
-      ui: uiSlice.reducer,
+      sessions: sessionsReducer,
+      transcript: transcriptReducer,
+      settings: settingsReducer,
+      sessionState: sessionStateReducer,
+      ui: uiReducer,
     },
   });
 }
@@ -816,11 +39,13 @@ export type RootState = ReturnType<AppStore['getState']>;
 
 // ─── Actions (re-exported) ────────────────────────────────────────────────────
 
-export const sessionsActions = sessionsSlice.actions;
-export const transcriptActions = transcriptSlice.actions;
-export const settingsActions = settingsSlice.actions;
-export const sessionStateActions = sessionStateSlice.actions;
-export const uiActions = uiSlice.actions;
+export {
+  sessionStateActions,
+  settingsActions,
+  sessionsActions,
+  transcriptActions,
+  uiActions,
+};
 
 /** Resolves a message ID through the alias map (for multi-turn tool-use merging). */
 export function getCanonicalMessageId(messageId: string, state: RootState): string {
@@ -856,6 +81,7 @@ const EMPTY_TRANSCRIPT: ChatMessage[] = [];
 const EMPTY_SYSTEM_PROMPTS: SystemPromptEntry[] = [];
 const EMPTY_AVAILABLE_MODELS: ModelInfo[] = [];
 const EMPTY_COMPOSER_INPUTS: ComposerInput[] = [];
+const EMPTY_WINDOW: TranscriptWindow = EMPTY_TRANSCRIPT_WINDOW;
 
 const selectActiveTranscript = (state: RootState): ChatMessage[] => {
   const path = selectActiveSessionPath(state);
@@ -867,6 +93,12 @@ const selectActiveSystemPrompts = (state: RootState): SystemPromptEntry[] => {
   const path = selectActiveSessionPath(state);
   if (!path) return EMPTY_SYSTEM_PROMPTS;
   return state.transcript.systemPromptsBySession[path] ?? EMPTY_SYSTEM_PROMPTS;
+};
+
+const selectActiveTranscriptWindow = (state: RootState): TranscriptWindow => {
+  const path = selectActiveSessionPath(state);
+  if (!path) return EMPTY_WINDOW;
+  return state.transcript.windowBySession[path] ?? EMPTY_WINDOW;
 };
 
 const selectActiveAvailableModels = (state: RootState): ModelInfo[] => {
@@ -908,6 +140,7 @@ export const selectViewState = createSelector(
     selectActiveSession,
     (s: RootState) => s.sessions.workspaceCwd,
     selectActiveTranscript,
+    selectActiveTranscriptWindow,
     selectActivePendingComposerInputs,
     selectActiveRunSummary,
     (s: RootState) => s.sessionState.activeRunSummaryBySession,
@@ -928,6 +161,7 @@ export const selectViewState = createSelector(
     activeSession,
     workspaceCwd,
     transcript,
+    transcriptWindow,
     pendingComposerInputs,
     activeRunSummary,
     runSummariesBySession,
@@ -947,6 +181,7 @@ export const selectViewState = createSelector(
       unreadFinishedSessionPaths,
       activeSession,
       transcript,
+      transcriptWindow,
       pendingComposerInputs,
       activeRunSummary,
       runSummariesBySession,

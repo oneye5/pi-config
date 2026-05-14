@@ -2,9 +2,10 @@
 
 ## Status
 
-Drafted: 2026-05-13  
-Audience: future implementation agents and the project owner  
-Scope: planning only; no implementation is implied by this document.
+Drafted: 2026-05-13
+Implemented: 2026-05-14
+Audience: future implementation agents and the project owner
+Scope: standalone analytics package and static dashboard are implemented; optional VS Code dashboard embedding remains deferred.
 
 ## Executive summary
 
@@ -27,6 +28,17 @@ Static interactive HTML site
 The first version should be a **static local dashboard** generated from the existing run analytics store. The site should load precomputed JSON datasets and render interactive charts in the browser. This gives humans filtering, charting, and drill-down affordances while keeping the core system agent-friendly, local-first, privacy-conscious, and easy to verify.
 
 Do **not** start with a browser directly querying raw analytics files or a long-lived local server. Those are useful future options, but they add complexity before the right analytical questions and chart shapes are proven.
+
+## Implementation execution checklist
+
+- [x] Phase 0 — settle contracts and drift
+- [x] Phase 1 — analysis package skeleton
+- [x] Phase 2 — source export reader
+- [x] Phase 3 — DuckDB model and SQL queries
+- [x] Phase 4 — generated site-data JSON
+- [x] Phase 5 — static dashboard
+- [x] Phase 6 — validation and regression tests
+- [ ] Phase 7 — optional VS Code integration (intentionally deferred)
 
 ## Goals
 
@@ -113,18 +125,17 @@ The current `RunSnapshot` schema already contains high-value chart inputs:
 
 This is enough for a useful first dashboard without adding raw transcript access.
 
-### Known implementation drift and blockers to resolve before implementation
+### Phase-0 repo drift status
 
-Implementation agents should resolve these before hardcoding paths or shipping a dashboard:
+The phase-0 contract cleanup is now settled:
 
-1. Some docs say analytics are under `data/outcomes/usage-data/<workspace-hash>/`, while current code writes under `data/outcomes/<workspace-hash>/` and only migrates a legacy `usage-data` layout.
-2. Root `README.md` says tracked `settings.json` points session history at `data/outcomes/sessions`, while the actual tracked `settings.json` currently uses `data/sessions`.
-3. `extension/src/shared/protocol.ts` includes an `exportRunAnalytics` webview message type, but the current host message switch does not appear to handle it.
-4. The extension auto-export file `run-analytics.json` is a private source export containing raw `RunSnapshot` objects, including `sessionPath` and possibly raw `analyticsFactors.contextFiles[].path` values. It must never be copied directly into `analysis/site/data/` or treated as shareable dashboard data.
+1. Analytics storage is authoritative under `data/outcomes/<workspace-hash>/`.
+2. Legacy `data/outcomes/usage-data/<workspace-hash>/` is migration-only.
+3. Tracked `settings.json`, `README.md`, and `install.ps1` agree on `sessionDir: data/outcomes/sessions`.
+4. The stale `exportRunAnalytics` webview message has been removed; any future webview export UX must define a sanitized output contract explicitly.
+5. The extension auto-export file `run-analytics.json` is a private source export containing raw `RunSnapshot` objects, including `sessionPath` and possibly raw `analyticsFactors.contextFiles[].path` values. It must never be copied directly into `analysis/site/data/` or treated as shareable dashboard data.
 
-The implementation should identify the actual authoritative runtime path and update docs only where necessary. Do not paper over the mismatch by adding a third path convention.
-
-Before any webview-driven analytics export UX ships, resolve the `exportRunAnalytics` protocol drift one way or the other: implement the host handler with a clearly sanitized output contract, or remove/rename the stale protocol variant so no UI expects a no-op export path.
+Do not add a third path convention. Future analysis code should use the current authoritative storage path or an explicit user-supplied source input.
 
 ## Recommended medium
 
@@ -205,9 +216,10 @@ analysis/
     index.html
     app.ts
     style.css
-    data/                     # generated, gitignored except optional sample data
+    data/                     # generated, gitignored
       manifest.json
       overview.json
+      run-summary.json
       model-quality.json
       verification-impact.json
       tool-usage.json
@@ -223,8 +235,14 @@ Add gitignore entries for generated/private analysis output:
 analysis/data/*.duckdb
 analysis/data/*.duckdb.*
 analysis/data/exports/
-analysis/site/data/*.json
-!analysis/site/data/sample-*.json
+analysis/site/data/manifest.json
+analysis/site/data/overview.json
+analysis/site/data/run-summary.json
+analysis/site/data/model-quality.json
+analysis/site/data/verification-impact.json
+analysis/site/data/tool-usage.json
+analysis/site/data/treatment-comparison.json
+analysis/site/data/timeline.json
 ```
 
 If the implementation later embeds the dashboard inside the VS Code extension, keep the reusable analysis transforms separate from the webview bundle.
@@ -583,35 +601,48 @@ Tabs or sections
 
 ### Initial chart set
 
-1. **Satisfaction over time**
-   - line or point chart,
-   - colored by model,
-   - filterable by scored/pure treatment.
+1. **Outcome trend with uncertainty**
+   - daily mean satisfaction as points/ranges,
+   - show run volume below the outcome panel,
+   - use 95% confidence intervals when sample size permits and show scored/total counts.
 
-2. **Model quality matrix**
-   - bar or dot plot,
-   - grouped by model and thinking level,
-   - show run count to prevent overreading tiny samples.
+2. **Model efficiency**
+   - compare median busy duration by model and thinking level,
+   - show IQR bars so “fast” does not hide wide spread.
 
-3. **Resolution distribution by model**
-   - stacked bars,
-   - emphasizes completed/fixed/partial/failed style outcome categories.
+3. **Model speed versus resolution frontier**
+   - plot median busy duration against resolved share,
+   - compute time from all completed runs in the group,
+   - compute resolved share from the scored subset and show Wilson intervals.
 
-4. **Verification impact**
-   - compare runs with no verification, passing verification, and failed verification,
-   - show satisfaction and resolution distribution.
+4. **Verification cost versus payoff**
+   - bucket runs by verification depth,
+   - show time cost in one panel and resolved share in a second aligned panel,
+   - avoid causal language because verification usage is observational.
 
-5. **Tool failure rate**
-   - table plus bar chart,
-   - sorted by failure rate with minimum call-count threshold.
+5. **Time versus satisfaction**
+   - keep the subjective lens explicit rather than calling it a general quality chart,
+   - use it as a complement to the objective resolution/time panels.
 
-6. **Subagent usage versus outcome**
-   - compare runs with and without subagent calls,
-   - show sample counts prominently.
+6. **Tool failure burden**
+   - bucket runs by failure count,
+   - show both median busy duration and resolved share to reveal time drag versus outcome drag.
 
-7. **Treatment purity**
-   - pure versus mixed treatment outcomes,
-   - useful when evaluating experiment assignments.
+7. **Tool reliability versus outcome**
+   - retain failure-rate and used-vs-unused satisfaction contrast views,
+   - frame them as correlations rather than causal claims.
+
+8. **Subagent dose-response**
+   - compare subagent call-depth buckets,
+   - show confidence intervals and sample counts prominently.
+
+9. **Treatment/config scorecard**
+   - compare experiment assignment + prompt hash + purity groups,
+   - show confidence intervals, sample counts, and resolved-rate tooltips.
+
+10. **Change size versus outcome**
+   - raw run scatterplot of mutation volume against satisfaction,
+   - optional weak trend guide only when enough varied points exist.
 
 ### Drill-down behavior
 
@@ -672,6 +703,8 @@ If no root `package.json` exists, keep commands in `analysis/package.json` and d
 
 ### Phase 0 — settle contracts and drift
 
+Status: ✅ Completed.
+
 Purpose: avoid building on ambiguous paths or stale docs.
 
 Tasks:
@@ -696,6 +729,8 @@ Acceptance criteria:
 - The protocol-level export path is either implemented with sanitization or explicitly out of scope/removed before UI work depends on it.
 
 ### Phase 1 — analysis package skeleton
+
+Status: ✅ Completed.
 
 Purpose: create a place for analysis code that is independent of the VS Code extension bundle.
 
@@ -728,6 +763,8 @@ Acceptance criteria:
 
 ### Phase 2 — source export reader
 
+Status: ✅ Completed.
+
 Purpose: ingest current run analytics without duplicating extension internals unnecessarily.
 
 Tasks:
@@ -753,6 +790,8 @@ Acceptance criteria:
 
 ### Phase 3 — DuckDB model and SQL queries
 
+Status: ✅ Completed.
+
 Purpose: create a stable agent-friendly analytical substrate.
 
 Tasks:
@@ -775,6 +814,8 @@ Acceptance criteria:
 
 ### Phase 4 — generated site-data JSON
 
+Status: ✅ Completed.
+
 Purpose: define the contract consumed by the static HTML site.
 
 Tasks:
@@ -796,6 +837,8 @@ Acceptance criteria:
 - Generation fails if the target site-data directory would receive raw `run-analytics.json` or any payload with top-level `completedRuns`/`openRuns` source arrays.
 
 ### Phase 5 — static dashboard
+
+Status: ✅ Completed.
 
 Purpose: deliver human interactive visualizations.
 
@@ -821,6 +864,8 @@ Acceptance criteria:
 - Browser devtools show no external CDN/network requests in private-data mode.
 
 ### Phase 6 — validation and regression tests
+
+Status: ✅ Completed.
 
 Purpose: make the analysis layer safe for iterative agent edits.
 
@@ -852,6 +897,8 @@ Acceptance criteria:
 
 ### Phase 7 — optional VS Code integration
 
+Status: ◻ Deferred intentionally; the standalone dashboard is shipped and the plan still treats VS Code embedding as optional follow-up work.
+
 Purpose: decide whether the dashboard should become part of the extension UI.
 
 Do this only after the standalone site is useful.
@@ -879,7 +926,6 @@ Default generated data may include:
 - model IDs,
 - thinking levels,
 - tool names,
-- skill names if already local and not sensitive,
 - prompt/tool/skill hashes,
 - run IDs,
 - workspace key or export-local identifier,
@@ -1016,17 +1062,6 @@ npm run build
 
 ## Risks and mitigations
 
-### Risk: accidental private data exposure
-
-Mitigation:
-
-- use chart-specific exports,
-- treat `run-analytics.json` as private source input, not browser/site data,
-- add fail-fast validation that rejects raw source payloads in `analysis/site/data/`,
-- privacy tests,
-- omit raw paths/payloads by default,
-- add explicit shareable/local mode labels.
-
 ### Risk: dashboard implies causality from sparse data
 
 Mitigation:
@@ -1042,17 +1077,28 @@ Mitigation:
 
 - use existing query/export code where possible,
 - document source path resolution,
-- resolve the `data/outcomes/<hash>` versus legacy `data/outcomes/usage-data/<hash>` docs before implementation,
+- keep legacy `usage-data` handling migration-only,
 - add tests against fixture payloads,
 - avoid duplicating checkpoint parsing.
+
+### Risk: accidental private data exposure
+
+Mitigation:
+
+- use chart-specific exports plus a privacy-safe shared filter dataset when needed,
+- treat `run-analytics.json` as private source input, not browser/site data,
+- add fail-fast validation that rejects raw source payloads in `analysis/site/data/`,
+- privacy tests,
+- omit raw paths/payloads by default,
+- add explicit shareable/local mode labels.
 
 ### Risk: stale export protocol creates a broken UI path
 
 Mitigation:
 
-- before any webview integration, implement the `exportRunAnalytics` host handler with sanitized output semantics, or remove/rename the stale protocol variant,
-- do not build dashboard UX that depends on an unhandled protocol message,
-- keep the first standalone dashboard on explicit CLI/local-server commands until this drift is resolved.
+- the stale webview protocol message has already been removed,
+- do not build dashboard UX that depends on raw store access from the webview,
+- keep the first standalone dashboard on explicit CLI/local-server commands unless a future sanitized webview export path is intentionally added.
 
 ### Risk: DuckDB dependency friction
 
@@ -1078,13 +1124,13 @@ Mitigation:
 - gitignore private generated data,
 - always retain existing JSONL/checkpoint files as canonical.
 
-## Open questions
+## Resolved implementation decisions
 
-1. Should version 1 consume `run-analytics.json` only, or also locate the workspace analytics directory automatically?
-2. Should skill names be visible by default in local dashboard data, or should only hashes/counts be shown?
-3. Should the site be designed from the start for later VS Code webview embedding, or should it prioritize standalone browser development?
-4. Which chart library best balances agent-editability and desired interactions?
-5. Is DuckDB a hard requirement for version 1, or can it be introduced after TypeScript-generated site data proves the dashboard contract?
+1. Version 1 supports explicit `--export <path>` and explicit `--storage-dir <path>` inputs; it does not auto-locate arbitrary local exports implicitly.
+2. Site data keeps skill metadata privacy-safe by default via counts and set-hash prefixes rather than raw skill names.
+3. The implementation prioritizes standalone browser development first; VS Code dashboard embedding remains optional follow-up work.
+4. Vega-Lite is the charting library for version 1, bundled locally with no CDN dependency.
+5. DuckDB ships in version 1 via `@duckdb/node-api`, alongside TypeScript sanitization and site-data generation.
 
 ## Recommended first implementation slice
 

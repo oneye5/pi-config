@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pie run analytics</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="header">
+        <div>
+          <h1>Run Analytics</h1>
+        </div>
+        <div class="meta">
+          <div><span>Generated:</span> <strong id="generated-at">—</strong></div>
+          <div><span>Workspace:</span> <strong id="workspace-key">—</strong></div>
+          <div><span>Export:</span> <strong id="source-exported-at">—</strong></div>
+          <div><span>Privacy:</span> <strong id="privacy-mode">—</strong></div>
+        </div>
+      </header>
+
+      <section class="filters">
+        <h2>Filters</h2>
+        <form id="filters" class="filters-grid">
+          <label>
+            <span>Start date</span>
+            <input id="filter-start" type="date" />
+          </label>
+          <label>
+            <span>End date</span>
+            <input id="filter-end" type="date" />
+          </label>
+          <label>
+            <span>Model</span>
+            <select id="filter-model">
+              <option value="">All models</option>
+            </select>
+          </label>
+          <label>
+            <span>Thinking</span>
+            <select id="filter-thinking">
+              <option value="">All levels</option>
+            </select>
+          </label>
+          <label>
+            <span>Experiment</span>
+            <select id="filter-experiment">
+              <option value="">All assignments</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input id="filter-scored-only" type="checkbox" />
+            <span>Scored runs only</span>
+          </label>
+          <label class="toggle">
+            <input id="filter-pure-only" type="checkbox" />
+            <span>Pure treatments only</span>
+          </label>
+          <button id="filter-reset" type="button" class="ghost-button">Reset filters</button>
+        </form>
+      </section>
+
+      <section class="cards" id="overview-cards"></section>
+
+      <div class="charts">
+        <section class="chart span-2">
+          <h3>Outcome trend <span class="note" id="timeline-note">—</span></h3>
+          <div id="chart-timeline" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Model efficiency <span class="note" id="model-efficiency-note">—</span></h3>
+          <div id="chart-model-efficiency" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Model speed vs resolution <span class="note" id="frontier-note">—</span></h3>
+          <div id="chart-model-frontier" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Time vs satisfaction <span class="note" id="time-quality-note">—</span></h3>
+          <div id="chart-time-quality" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Model/thinking scorecard <span class="note" id="model-note">—</span></h3>
+          <div id="chart-model-quality" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Outcome mix <span class="note" id="resolution-note">—</span></h3>
+          <div id="chart-resolution-by-model" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Verification cost vs payoff <span class="note" id="verification-cost-note">—</span></h3>
+          <div id="chart-verification-cost" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Tool failure burden <span class="note" id="failure-burden-note">—</span></h3>
+          <div id="chart-failure-burden" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Verification lift <span class="note" id="verification-note">—</span></h3>
+          <div id="chart-verification-impact" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Tool reliability vs outcome <span class="note" id="tool-note">—</span></h3>
+          <div id="chart-tool-failure-rate" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Subagent usage <span class="note" id="subagent-note">—</span></h3>
+          <div id="chart-subagent-usage" class="chart-slot"></div>
+        </section>
+
+        <section class="chart">
+          <h3>Config scorecard <span class="note" id="treatment-note">—</span></h3>
+          <div id="chart-treatment-purity" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Change size vs outcome <span class="note" id="mutation-note">—</span></h3>
+          <div id="chart-file-mutation" class="chart-slot"></div>
+        </section>
+
+        <section class="chart span-2">
+          <h3>Effort distribution <span class="note" id="effort-note">—</span></h3>
+          <div id="chart-effort-distribution" class="chart-slot"></div>
+        </section>
+
+        <section class="notes span-2">
+          <h3>Notes</h3>
+          <ul>
+            <li><strong>Privacy:</strong> Sanitized JSON only. Raw paths, transcripts, and tool payloads excluded.</li>
+            <li><strong>Correlation ≠ causation:</strong> Charts show observed correlations. Confidence intervals show uncertainty, not proof.</li>
+            <li><strong>Objective lenses:</strong> Resolution share, verification depth, tool failures, and busy duration complement satisfaction rather than replacing it.</li>
+            <li><strong>Refresh:</strong> <code>npm run export-site-data</code> then <code>npm run serve</code>. Small n (&lt;5) = suggestive only.</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+
+    <noscript>This dashboard needs JavaScript enabled to load local JSON datasets.</noscript>
+    <script type="module" src="./dist/app.js"></script>
+  </body>
+</html>

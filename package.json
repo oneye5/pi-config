@@ -1,0 +1,15 @@
+{
+  "name": "pi-config",
+  "private": true,
+  "scripts": {
+    "analytics:typecheck": "npm --prefix analysis run typecheck --",
+    "analytics:test": "npm --prefix analysis run test --",
+    "analytics:build-db": "npm --prefix analysis run build-db --",
+    "analytics:query": "npm --prefix analysis run query --",
+    "analytics:export-site-data": "npm --prefix analysis run export-site-data --",
+    "analytics:validate-site-data": "npm --prefix analysis run validate-site-data --",
+    "analytics:build-site": "npm --prefix analysis run build-site --",
+    "analytics:serve": "npm --prefix analysis run serve --",
+    "analytics:validate": "npm --prefix analysis run validate --"
+  }
+}

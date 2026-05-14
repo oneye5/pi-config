@@ -1,4 +1,4 @@
-import type { ComposerInput, ModelSettings, ThinkingLevel } from '../shared/protocol';
+import type { ComposerInput, ModelSettings, ThinkingLevel, TranscriptPageDirection } from '../shared/protocol';
 
 // ─── Argument parsing ────────────────────────────────────────────────────────
 
@@ -127,6 +127,55 @@ export function validateSessionOpen(params: unknown): SessionOpenParams {
   return {
     sessionPath,
     selectionToken: readSelectionToken('session.open', params),
+  };
+}
+
+export interface LoadTranscriptPageParams extends SessionPathParams {
+  direction: TranscriptPageDirection;
+  loadedStart?: number;
+  loadedEnd?: number;
+}
+
+const TRANSCRIPT_PAGE_DIRECTIONS: TranscriptPageDirection[] = ['older', 'newer', 'latest'];
+
+export function validateLoadTranscriptPage(params: unknown): LoadTranscriptPageParams {
+  if (!isObj(params)) {
+    fail('session.loadTranscriptPage', 'expected an object');
+  }
+
+  const sessionPath = params['sessionPath'];
+  if (typeof sessionPath !== 'string' || !sessionPath) {
+    fail('session.loadTranscriptPage', 'requires a string sessionPath');
+  }
+
+  const direction = params['direction'];
+  if (typeof direction !== 'string' || !TRANSCRIPT_PAGE_DIRECTIONS.includes(direction as TranscriptPageDirection)) {
+    fail('session.loadTranscriptPage', `direction must be one of ${TRANSCRIPT_PAGE_DIRECTIONS.join(', ')}`);
+  }
+
+  const loadedStartRaw = params['loadedStart'];
+  const loadedEndRaw = params['loadedEnd'];
+
+  if (loadedStartRaw !== undefined && (!Number.isInteger(loadedStartRaw) || Number(loadedStartRaw) < 0)) {
+    fail('session.loadTranscriptPage', 'loadedStart must be a non-negative integer when provided');
+  }
+
+  if (loadedEndRaw !== undefined && (!Number.isInteger(loadedEndRaw) || Number(loadedEndRaw) < 0)) {
+    fail('session.loadTranscriptPage', 'loadedEnd must be a non-negative integer when provided');
+  }
+
+  const loadedStart = typeof loadedStartRaw === 'number' ? loadedStartRaw : undefined;
+  const loadedEnd = typeof loadedEndRaw === 'number' ? loadedEndRaw : undefined;
+
+  if (loadedStart !== undefined && loadedEnd !== undefined && loadedStart > loadedEnd) {
+    fail('session.loadTranscriptPage', 'loadedStart must be less than or equal to loadedEnd when both are provided');
+  }
+
+  return {
+    sessionPath,
+    direction: direction as TranscriptPageDirection,
+    loadedStart,
+    loadedEnd,
   };
 }
 

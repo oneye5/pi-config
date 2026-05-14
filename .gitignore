@@ -1,32 +1,78 @@
 # PI local runtime data and secrets — never commit these
 /auth.json
-/pie/
 /data/
+
+# Legacy repo-local PI runtime dirs kept ignored for compatibility
+# (root /pie/ is old local runtime data, not the tracked VS Code extension source under /extension/)
 /sessions/
+/pie/
+
+# Legacy local export drop locations kept ignored for compatibility
+/run-analytics-export.json
+/private-run-analytics.json
 
 # Environment / secrets
 .env
 .env.*
 *.env
 
-# PI managed binaries and package caches
+# PI-managed binaries and package caches
 /bin/
 /git/
 /npm/
+
+# Package manager artifacts
+node_modules/
+.pnpm-store/
+.pnpm-debug.log
+
+# Note: keep lockfiles (package-lock.json, yarn.lock, pnpm-lock.yaml) tracked
+
+# Package build artifacts
+/extension/out/
+/analysis/site/dist/
+*.vsix
+
+# Build / test caches
+coverage/
+.nyc_output/
+*.tsbuildinfo
+out-tsc/
+.tmp/
+.temp/
+.cache/
+.parcel-cache/
+.eslintcache
+
+# Analysis package private/generated outputs
+/analysis/data/*.duckdb
+/analysis/data/*.duckdb.*
+/analysis/data/exports/
+/analysis/data/tmp-site-data/
+/analysis/site/data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # OS artifacts
 Thumbs.db
 .DS_Store
 desktop.ini
+ehthumbs.db
 
-# Extension build artifacts
-extension/out/
-extension/node_modules/
-extension/*.vsix
-
-# Editor artifacts
+# Editor / IDE artifacts
 *.swp
 *.swo
+.idea/
+.vscode-test/
+# NOTE: this repo keeps a committed .vscode/ (workspace settings/tasks/extensions).
+# If you want to ignore all local VS Code state, uncomment the next line:
+# .vscode/
 
 # Installer-generated backups
 /settings.json.session-dir.*.bak

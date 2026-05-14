@@ -24,7 +24,7 @@ test('buildSessionSystemPrompts mirrors the actual model-context order for a cus
       { path: '/repo/AGENTS.md', content: 'Repo rules' },
       { path: '/home/user/.pi/agent/AGENTS.md', content: 'Global rules' },
     ],
-    skills: [makeSkill('verification-before-completion'), makeSkill('frontend-design')],
+    skills: [makeSkill('design-system'), makeSkill('frontend-design')],
   };
 
   const prompts = buildSessionSystemPrompts({
@@ -54,7 +54,7 @@ test('buildSessionSystemPrompts mirrors the actual model-context order for a cus
   assert.equal(prompts[4]?.text, '## repo/AGENTS.md\n\nRepo rules');
   assert.equal(prompts[5]?.tooltip, '/home/user/.pi/agent/AGENTS.md');
   assert.equal(prompts[5]?.text, '## agent/AGENTS.md\n\nGlobal rules');
-  assert.equal(prompts[6]?.summary, 'verification-before-completion, frontend-design');
+  assert.equal(prompts[6]?.summary, 'design-system, frontend-design');
   assert.match(prompts[7]?.text ?? '', /^Current date: \d{4}-\d{2}-\d{2}\nCurrent working directory: \/repo$/);
 });
 
@@ -123,7 +123,7 @@ test('buildSessionSystemPrompts matches Pi skill inclusion rules when read is un
     promptOptions: {
       cwd: '/repo',
       selectedTools: ['bash'],
-      skills: [makeSkill('verification-before-completion')],
+      skills: [makeSkill('frontend-design')],
     },
     formatSkillsForPrompt: (skills) => skills.map((skill) => skill.name).join('\n'),
   });

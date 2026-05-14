@@ -24,9 +24,13 @@
   --session-tab-active-outline: color-mix(in srgb, var(--panel-accent) 22%, var(--panel-border));
   --session-tab-shadow: 0 10px 22px -22px color-mix(in srgb, var(--vscode-widget-shadow, rgba(0, 0, 0, 0.24)) 85%, transparent);
   --session-tab-drag-shadow: 0 18px 30px -20px color-mix(in srgb, var(--vscode-widget-shadow, rgba(0, 0, 0, 0.28)) 100%, transparent);
-  --tool-call-name-column-width: 18ch;
+  /* Maximum width for summary content when a summary is present.
+     We prefer to give the name/title priority and let the summary be
+     constrained first, so long titles aren't cut off. */
+  --tool-call-summary-column-width: 36ch;
 
   --tool-call-size-column-width: 11ch;
+  --tool-call-status-column-width: 10ch;
   --panel-danger: var(--vscode-errorForeground, #c33);
   --panel-danger-surface: var(--vscode-inputValidation-errorBackground, rgba(255, 50, 50, 0.12));
   --panel-warning: var(--vscode-inputValidation-warningBorder, #d29922);
@@ -575,6 +579,98 @@ body.session-tab-dragging {
   align-items: flex-start;
 }
 
+.transcript.transcript-virtual {
+  gap: 0;
+  position: relative;
+}
+
+.transcript-virtual-inner {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+.transcript-virtual-row {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.transcript-gap-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.transcript-gap-row-bottom {
+  justify-content: flex-end;
+}
+
+.transcript-gap-btn {
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--panel-subtle-surface);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.transcript-gap-btn:hover {
+  background: var(--panel-hover-surface);
+}
+
+.transcript-gap-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.transcript-jump-latest {
+  /* Small, subtle, centered above the composer (not inside the input panel) */
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--composer-height, 64px) + 8px);
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 6%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-subtle-surface) 78%, transparent);
+  color: var(--panel-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  z-index: 280;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.transcript-jump-latest:hover {
+  transform: translateX(-50%) translateY(-2px);
+  background: var(--panel-hover-surface);
+  color: var(--vscode-foreground);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.transcript-jump-latest:focus-visible {
+  outline: 1px solid var(--panel-accent);
+  outline-offset: 2px;
+}
+
 .loading-wheel {
   width: 22px;
   height: 22px;
@@ -987,33 +1083,6 @@ body.session-tab-dragging {
   margin-bottom: 6px;
 }
 
-.system-prompt-card .tool-call-heading {
-  gap: 0;
-}
-
-.system-prompt-card .tool-call-name,
-.system-prompt-card .tool-call-name.with-summary {
-  flex: 0 1 auto;
-  max-width: 65%;
-}
-
-.system-prompt-card .tool-call-summary,
-.system-prompt-card .system-prompt-summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin-left: 10px;
-  padding-left: 10px;
-  border-left: 1px solid var(--panel-border);
-  opacity: 0.92;
-  font-family: var(--vscode-font-family);
-  line-height: 1.35;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
 .tool-call.running {
   border-color: var(--panel-border);
 }
@@ -1034,18 +1103,9 @@ body.session-tab-dragging {
   gap: 8px;
 }
 
-.tool-call-heading.with-summary {
-  display: grid;
-  grid-template-columns: fit-content(var(--tool-call-name-column-width)) minmax(0, 1fr) minmax(0, var(--tool-call-size-column-width));
-  column-gap: 6px;
-  align-items: center;
-}
-
+.tool-call-heading.with-summary,
 .tool-call-heading.with-size-hint {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, var(--tool-call-size-column-width));
-  column-gap: 6px;
-  align-items: center;
+  gap: 6px;
 }
 
 .tool-call-name {
@@ -1060,12 +1120,16 @@ body.session-tab-dragging {
 }
 
 .tool-call-name.with-summary {
-  max-width: var(--tool-call-name-column-width);
+  /* Allow the name to expand within the row; the summary is capped and
+     allowed to shrink first so the title stays readable. */
+  max-width: none;
 }
 
 .tool-call-summary {
+  display: block;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  max-width: var(--tool-call-summary-column-width);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1120,9 +1184,11 @@ body.session-tab-dragging {
 }
 
 .tool-call-size-hint {
+  display: block;
   min-width: 0;
+  flex: 0 0 var(--tool-call-size-column-width);
   max-width: var(--tool-call-size-column-width);
-  justify-self: end;
+  margin-left: auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1134,15 +1200,15 @@ body.session-tab-dragging {
 }
 
 .tool-call-size-hint.is-empty {
-  visibility: hidden;
+  display: none;
 }
 
 .tool-call-summary-link {
   appearance: none;
   display: block;
   min-width: 0;
-  width: 100%;
-  justify-self: stretch;
+  flex: 0 1 auto;
+  max-width: var(--tool-call-summary-column-width);
   border: 0;
   padding: 0;
   background: transparent;
@@ -1165,11 +1231,14 @@ body.session-tab-dragging {
 }
 
 .tool-call-status {
-  flex: 0 0 auto;
-  min-width: max-content;
-  padding-inline-start: 8px;
+  min-width: var(--tool-call-status-column-width);
+  max-width: var(--tool-call-status-column-width);
+  flex: 0 0 var(--tool-call-status-column-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
+  font-family: var(--vscode-editor-font-family, monospace);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.12em;

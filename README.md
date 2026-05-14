@@ -21,13 +21,23 @@ Produce a higher quality / quantity of work by:
 - PI still organizes session files by working directory inside `data/outcomes/sessions/`; using a stable checkout path helps project-scoped resume behavior on a given machine.
 - `auth.json` remains ignored because it is secret material.
 - Session JSONL contains full transcripts (and may contain image payloads), so treat `data/outcomes/sessions/` as sensitive local data.
-- `install.ps1` migrates legacy session files from `~/.pi/agent/sessions/`, repairs reachable absolute or `~`-based legacy `sessionDir` stores into this checkout's local `data/outcomes/sessions/--<cwd>--/` layout, prefers the newer transcript on conflicts, and preserves conflicting versions as backup files.
+- `install.ps1` migrates legacy session files from `~/.pi/agent/sessions/` and the older repo-local `data/sessions/` layout, repairs reachable absolute or `~`-based legacy `sessionDir` stores into this checkout's local `data/outcomes/sessions/--<cwd>--/` layout, prefers the newer transcript on conflicts, and preserves conflicting versions as backup files.
 - Relative `sessionDir` overrides cannot be repaired safely by the installer and need manual cleanup.
 - The tracked `settings.json` points `sessionDir` at `data/outcomes/sessions`; if you override it locally, clear that override when you want to return to the shared layout.
 
 ## Quick start
 
-TODO
+```bash
+# from repo root
+npm run analytics:serve
+```
+
+Optional analytics helpers from repo root:
+
+- `npm run analytics:build-db`
+- `npm run analytics:query -- --name model_quality`
+- `npm run analytics:export-site-data`
+- `npm run analytics:validate`
 
 ## Prerequisites
 

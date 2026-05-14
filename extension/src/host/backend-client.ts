@@ -33,6 +33,7 @@ const RPC_TIMEOUTS_MS: Record<string, number> = {
   'session.list': 60_000,
   'session.create': 60_000,
   'session.open': 60_000,
+  'session.loadTranscriptPage': 30_000,
   'settings.set': 60_000,
   'settings.get': 15_000,
   'models.list': 15_000,

@@ -3,7 +3,7 @@
  * extension host and the backend process. The host refuses to start the backend
  * unless the values match.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export function assertProtocolVersion(peerLabel: string, protocolVersion: unknown): void {
   if (!Number.isInteger(protocolVersion)) {
@@ -193,6 +193,36 @@ export interface ChatMessage {
   durationMs?: number;
 }
 
+export type TranscriptPageDirection = 'older' | 'newer' | 'latest';
+
+/**
+ * Metadata describing the currently loaded transcript window inside the full
+ * display transcript for a session.
+ */
+export interface TranscriptWindow {
+  /** Total display-message rows currently available in the backend cache. */
+  totalCount: number;
+  /** Inclusive start index (0-based) of the loaded window in the full transcript. */
+  loadedStart: number;
+  /** Exclusive end index of the loaded window in the full transcript. */
+  loadedEnd: number;
+  /** True when there are undisplayed older rows before `loadedStart`. */
+  hasOlder: boolean;
+  /** True when there are undisplayed newer rows after `loadedEnd`. */
+  hasNewer: boolean;
+  /** True when the loaded window is only a subset of the full transcript. */
+  isPartial: boolean;
+  /** True when the full transcript contains at least one user message. */
+  hasUserMessages: boolean;
+}
+
+export interface TranscriptPagePayload {
+  sessionPath: string;
+  transcript: ChatMessage[];
+  transcriptWindow: TranscriptWindow;
+  busy: boolean;
+}
+
 export type SystemPromptSource = 'provider' | 'harness' | 'user';
 
 export type SystemPromptAvailability = 'available' | 'missing' | 'hidden' | 'unknown';
@@ -251,6 +281,7 @@ export interface BackendReadyPayload {
 export interface SessionOpenedPayload {
   session: SessionSummary;
   transcript: ChatMessage[];
+  transcriptWindow: TranscriptWindow;
   busy: boolean;
   selectionToken?: string;
   systemPrompts?: SystemPromptEntry[];
@@ -395,6 +426,16 @@ export const DEFAULT_CHAT_PREFS: ChatPrefs = {
   suppressCompletionNotifications: false,
 };
 
+export const EMPTY_TRANSCRIPT_WINDOW: TranscriptWindow = {
+  totalCount: 0,
+  loadedStart: 0,
+  loadedEnd: 0,
+  hasOlder: false,
+  hasNewer: false,
+  isPartial: false,
+  hasUserMessages: false,
+};
+
 export function resolveChatPrefs(prefs?: Partial<ChatPrefs> | null): ChatPrefs {
   return {
     ...DEFAULT_CHAT_PREFS,
@@ -414,6 +455,7 @@ export interface ViewState {
   unreadFinishedSessionPaths: string[];
   activeSession: SessionSummary | null;
   transcript: ChatMessage[];
+  transcriptWindow: TranscriptWindow;
   /** Host-owned pending inputs for the active session. */
   pendingComposerInputs: ComposerInput[];
   /** Most recent run summary for the active session, including recently completed runs. */
@@ -465,7 +507,6 @@ export type WebviewToHostMessage =
   | { type: 'refreshState' }
   | { type: 'requestSnapshot' }
   | { type: 'openFilePicker' }
-  | { type: 'exportRunAnalytics' }
   | { type: 'openFile'; path: string }
   | { type: 'addComposerInput'; sessionPath: string; input: ComposerInputDraft }
   | { type: 'removeComposerInput'; sessionPath: string; inputId: string }
@@ -479,6 +520,9 @@ export type WebviewToHostMessage =
   | { type: 'openSession'; sessionPath: string }
   | { type: 'closeSession'; sessionPath: string }
   | { type: 'moveSessionTab'; sessionPath?: string; fromIndex: number; toIndex: number }
+  | { type: 'loadOlderTranscript'; sessionPath?: string }
+  | { type: 'loadNewerTranscript'; sessionPath?: string }
+  | { type: 'jumpToLatestTranscript'; sessionPath?: string }
   | { type: 'recordOutcome'; sessionPath: string; outcome: RunOutcome }
   | { type: 'startNewTask'; sessionPath: string }
   | { type: 'continueTask'; sessionPath: string }

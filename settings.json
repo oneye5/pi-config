@@ -1,9 +1,9 @@
 {
   "lastChangelogVersion": "0.73.0",
   "defaultProvider": "github-copilot",
-  "defaultModel": "gpt-5.4",
-  "defaultThinkingLevel": "xhigh",
-  "sessionDir": "data/sessions",
+  "defaultModel": "claude-opus-4.7",
+  "defaultThinkingLevel": "medium",
+  "sessionDir": "data/outcomes/sessions",
   "packages": [
     {
       "source": "npm:pi-web-access",
