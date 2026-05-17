@@ -62,5 +62,8 @@ test('toggle helpers return partial pref patches without mutating source prefs',
     autoExpandToolCalls: true,
     autoExpandSubagentCalls: false,
     suppressCompletionNotifications: false,
+    showPruningMessages: true,
+    extensionToggles: {},
+    providerToggles: {},
   });
 });

@@ -241,6 +241,7 @@ test('SessionOpenedPayload can carry structured analytics factors', () => {
       lastModifiedAt: null,
     }],
     skillSetHash: 'skill-set-hash',
+    activeExtensions: ['subagent'],
   };
 
   const payload: SessionOpenedPayload = {

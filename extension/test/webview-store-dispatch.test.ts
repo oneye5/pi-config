@@ -46,6 +46,7 @@ function makeViewState(overrides: Partial<ViewState> = {}): ViewState {
     availableExtensions: [],
     fileChanges: [],
     pruningResult: null,
+    pruningSettings: { mode: 'auto' as const, skillCeiling: 5, toolCeiling: 5 },
     ...overrides,
   };
 }
@@ -92,7 +93,7 @@ test('applyHostMessage state: seeds session store', () => {
   applyHostMessage(stateMessage(state));
 
   const store = getSessionStore('/s/a');
-  assert.equal(store.transcriptSig.value.length, 1);
+  assert.equal(store.transcriptSig.value!.length, 1);
   assert.equal(store.busySig.value, false);
 });
 
@@ -154,7 +155,7 @@ test('applyHostMessage patch: host instance change requests snapshot', () => {
 test('applyHostMessage state: host instance change disposes all stores', () => {
   applyHostMessage(stateMessage(makeViewState(), 1, 'host-1'));
   const store1 = getSessionStore('/s/a');
-  assert.equal(store1.transcriptSig.value.length, 1);
+  assert.equal(store1.transcriptSig.value!.length, 1);
 
   // New host instance
   applyHostMessage(stateMessage(makeViewState({ openTabPaths: ['/s/b'], activeSession: { path: '/s/b', name: 'B', cwd: '/', modifiedAt: '', messageCount: 0 } }), 1, 'host-2'));

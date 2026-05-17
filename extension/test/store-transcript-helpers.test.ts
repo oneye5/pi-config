@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ChatMessagePart, ToolCall } from '../src/shared/protocol';
+import type { ChatMessage, ChatMessagePart, ToolCall } from '../src/shared/protocol';
 import {
   appendAssistantTextPart,
   assistantToolCallsFromMessage,
@@ -16,7 +16,7 @@ import {
   type TranscriptState,
 } from '../src/host/store/transcript-helpers';
 
-function assistantMessage(overrides: Record<string, unknown> = {}) {
+function assistantMessage(overrides: Record<string, unknown> = {}): ChatMessage {
   return {
     id: 'assistant-1',
     role: 'assistant' as const,
@@ -24,10 +24,8 @@ function assistantMessage(overrides: Record<string, unknown> = {}) {
     markdown: '',
     status: 'completed' as const,
     toolCalls: [] as ToolCall[],
-    parts: [] as ChatMessagePart[],
-    thinking: '',
     ...overrides,
-  };
+  } as ChatMessage;
 }
 
 function createState(overrides: Partial<TranscriptState> = {}): TranscriptState {
@@ -166,11 +164,11 @@ test('upsertAssistantToolCall adds new tool calls and replaces existing ones in 
     status: 'completed',
   });
 
-  assert.equal(message.toolCalls.length, 1);
-  assert.equal(message.toolCalls[0]?.status, 'completed');
-  assert.equal(message.parts.length, 1);
-  assert.equal(message.parts[0]?.kind, 'toolCall');
-  assert.equal(message.parts[0]?.kind === 'toolCall' ? message.parts[0].toolCall.result : undefined, '/workspace');
+  assert.equal(message.toolCalls!.length, 1);
+  assert.equal(message.toolCalls![0]?.status, 'completed');
+  assert.equal(message.parts!.length, 1);
+  assert.equal(message.parts![0]?.kind, 'toolCall');
+  assert.equal(message.parts![0]?.kind === 'toolCall' ? message.parts![0].toolCall.result : undefined, '/workspace');
 });
 
 test('mergeContinuationToolCalls consumes incoming tool calls from parts first and falls back to toolCalls', () => {
@@ -195,7 +193,7 @@ test('assistantToolCallsFromMessage returns cloned assistant tool calls and igno
   extracted[0]!.name = 'changed';
 
   assert.equal(extracted.length, 1);
-  assert.equal(message.parts[0]?.kind === 'toolCall' ? message.parts[0].toolCall.name : undefined, 'edit');
+  assert.equal(message.parts![0]?.kind === 'toolCall' ? message.parts![0].toolCall.name : undefined, 'edit');
   assert.deepEqual(assistantToolCallsFromMessage({ role: 'user' } as any), []);
 });
 

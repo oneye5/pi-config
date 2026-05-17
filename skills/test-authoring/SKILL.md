@@ -18,9 +18,7 @@ Write maintainable, high-signal tests using Node.js built-in tooling. Tests shou
 
 ## Required Artifacts
 
-- `test/*.test.ts` — Test files co-located with package code
-- `test/helpers.ts` — Shared test utilities for the package
-- `test/_helpers/` — Framework-specific helpers (extension uses this)
+- `test/*.test.ts` — Test files in the package's `test/` directory
 
 ## Core Rules
 
@@ -223,7 +221,7 @@ npm run test -- --package <id>
 
 ## Coverage Gates
 
-Tests must pass the package's coverage thresholds. Check `run-tests.mjs` for current limits (typically 70% lines, 60% branches). If coverage fails:
+Tests must pass the package's coverage thresholds defined in `scripts/run-tests.mjs`. Thresholds are package-specific (e.g. 80-95% lines, 75-95% branches). If coverage fails:
 
 1. Identify uncovered branches (look for "if" statements without coverage)
 2. Add edge case tests for those branches
