@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { ChatMessagePart, ToolCall } from '../src/shared/protocol';
 import {
   appendAssistantTextPart,
   assistantToolCallsFromMessage,
@@ -22,7 +23,9 @@ function assistantMessage(overrides: Record<string, unknown> = {}) {
     createdAt: '2026-01-01T00:00:00.000Z',
     markdown: '',
     status: 'completed' as const,
-    toolCalls: [],
+    toolCalls: [] as ToolCall[],
+    parts: [] as ChatMessagePart[],
+    thinking: '',
     ...overrides,
   };
 }

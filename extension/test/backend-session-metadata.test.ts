@@ -114,7 +114,7 @@ test('buildCurrentSummary falls back to startup cwd and normalizes thinking leve
       thinkingLevel: 'max',
       sessionManager: {
         ...makeContext().session.sessionManager,
-        getCwd: () => undefined,
+        getCwd: () => undefined as unknown as string,
         getBranch: () => [{
           id: 'entry-1',
           timestamp: '2026-01-01T00:00:00.000Z',

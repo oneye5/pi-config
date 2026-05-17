@@ -37,6 +37,10 @@ const baseViewState: ViewState = {
   availableModels: [],
   contextUsage: null,
   prefs: DEFAULT_CHAT_PREFS,
+  availableExtensions: [],
+  fileChanges: [],
+  pruningResult: null,
+  pruningSettings: { mode: 'auto' as const, skillCeiling: 5, toolCeiling: 5 },
 };
 
 test('buildPatchEnvelope marks the stream dirty when the view cannot accept patches', () => {

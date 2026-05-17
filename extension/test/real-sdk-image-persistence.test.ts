@@ -74,13 +74,10 @@ test('real SDK persists committed user images in canonical session history', { t
         sessionManager,
         sessionStartEvent,
       });
-      return {
-        ...created,
-        services,
-      };
+      return Object.assign({ services }, created as Record<string, unknown>);
     };
 
-    const sessionManager = sdk.SessionManager.create(cwd, sessionDir);
+    const sessionManager = sdk.SessionManager.create(cwd);
     const runtime = await sdk.createAgentSessionRuntime(createRuntime, { cwd, agentDir, sessionManager });
 
     try {
@@ -131,7 +128,7 @@ test('real SDK persists committed user images in canonical session history', { t
 
       await runtime.dispose();
 
-      const reopenedManager = sdk.SessionManager.open(sessionFile!, sessionDir, cwd);
+      const reopenedManager = sdk.SessionManager.open(sessionFile!);
       const reopenedTranscript = mapTranscript(reopenedManager.getBranch() as any);
       const reopenedUserMessage = reopenedTranscript.find((message) =>
         message.role === 'user'

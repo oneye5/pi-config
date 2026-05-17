@@ -285,7 +285,6 @@ test('message_end falls back to the last or inferred message id and agent_end sk
       role: 'assistant',
       content: [{ type: 'text', text: 'errored' }],
       stopReason: 'error',
-      errorMessage: 'boom',
     },
   });
 

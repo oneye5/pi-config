@@ -134,6 +134,10 @@ test('HostToWebviewMessage state envelope carries hostInstanceId and revision', 
       availableModels: [],
       contextUsage: null,
       prefs: DEFAULT_CHAT_PREFS,
+      availableExtensions: [],
+      fileChanges: [],
+      pruningResult: null,
+      pruningSettings: { mode: 'auto' as const, skillCeiling: 5, toolCeiling: 5 },
     },
   };
   assert.equal(msg.type, 'state');
@@ -234,6 +238,7 @@ test('SessionOpenedPayload can carry structured analytics factors', () => {
       contentHash: 'skill-hash',
       sourceHash: 'skill-source-hash',
       disableModelInvocation: false,
+      lastModifiedAt: null,
     }],
     skillSetHash: 'skill-set-hash',
   };

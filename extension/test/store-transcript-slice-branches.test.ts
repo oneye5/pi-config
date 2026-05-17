@@ -205,7 +205,7 @@ test('append and status mutations are no-ops when the target message does not ex
       messageId: 'missing',
       toolCall: { id: 'tool-1', name: 'bash', input: { command: 'pwd' }, status: 'running' },
     }),
-    transcriptActions.setMessageStatus({ sessionPath: '/session/missing', messageId: 'missing', status: 'failed' }),
+    transcriptActions.setMessageStatus({ sessionPath: '/session/missing', messageId: 'missing', status: 'error' }),
   ], initial);
 
   assert.deepEqual(next, initial);

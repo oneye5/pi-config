@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import type { Overlay } from '../src/webview/panel/overlay';
 import { StreamSmoother, DEFAULT_STREAM_SMOOTHER_CONFIG } from '../src/webview/panel/stream-smoother';
 import type { PatchOp } from '../src/shared/protocol';
 
@@ -11,8 +12,8 @@ test('StreamSmoother uses default config when no overrides provided', () => {
 });
 
 test('StreamSmoother applies non-delta patches immediately', () => {
-  let flushedOverlay: ReturnType<typeof smoother.processPatch> | null = null;
-  const smoother = new StreamSmoother({}, (o) => { flushedOverlay = o; });
+  const flushedOverlay: Overlay[] = [];
+  const smoother = new StreamSmoother({}, (o: Overlay) => { flushedOverlay.push(o); });
 
   const toolOp: PatchOp = {
     kind: 'toolCall',
@@ -26,14 +27,14 @@ test('StreamSmoother applies non-delta patches immediately', () => {
   };
 
   const result = smoother.processPatch(toolOp);
-  assert.ok(flushedOverlay !== null);
-  assert.ok(flushedOverlay!.partsByMessage.has('msg1'));
-  assert.equal(result, flushedOverlay);
+  assert.equal(flushedOverlay.length, 1);
+  assert.ok(flushedOverlay[0].partsByMessage.has('msg1'));
+  assert.equal(result, flushedOverlay[0]);
 });
 
 test('StreamSmoother applies small deltas immediately without smoothing', () => {
-  let flushedOverlay: ReturnType<typeof smoother.processPatch> | null = null;
-  const smoother = new StreamSmoother({}, (o) => { flushedOverlay = o; });
+  const flushedOverlay: Overlay[] = [];
+  const smoother = new StreamSmoother({}, (o: Overlay) => { flushedOverlay.push(o); });
 
   const smallDelta: PatchOp = {
     kind: 'messageDelta',
@@ -42,9 +43,11 @@ test('StreamSmoother applies small deltas immediately without smoothing', () => 
   };
 
   const result = smoother.processPatch(smallDelta);
-  assert.ok(flushedOverlay !== null);
+  assert.equal(flushedOverlay.length, 1);
   assert.equal(result.partsByMessage.get('msg1')?.length, 1);
-  assert.equal(result.partsByMessage.get('msg1')?.[0].text, 'hi');
+  const part = result.partsByMessage.get('msg1')?.[0];
+  assert.ok(part?.kind === 'text');
+  assert.equal(part.text, 'hi');
 });
 
 test('StreamSmoother buffers medium deltas for smoothing', () => {
@@ -82,7 +85,9 @@ test('StreamSmoother flushAll emits all pending deltas', () => {
   const result = smoother.flushAll();
 
   assert.ok(result.partsByMessage.get('msg1'));
-  assert.equal(result.partsByMessage.get('msg1')?.[0].text, 'buffered text');
+  const part = result.partsByMessage.get('msg1')?.[0];
+  assert.ok(part?.kind === 'text');
+  assert.equal(part.text, 'buffered text');
   assert.equal(smoother.getPendingCharCount(), 0);
 });
 
@@ -176,7 +181,7 @@ test('StreamSmoother handles multiple messages independently', () => {
 });
 
 test('StreamSmoother keeps the first emit deadline when more buffered deltas arrive', (t) => {
-  let flushedOverlay: ReturnType<typeof smoother.flushAll> | null = null;
+  const flushedOverlay: Overlay[] = [];
   const smoother = new StreamSmoother(
     {
       minCharsForSmoothing: 1,
@@ -184,8 +189,8 @@ test('StreamSmoother keeps the first emit deadline when more buffered deltas arr
       charDisplayMs: 1,
       minEmitIntervalMs: 30,
     },
-    (overlay) => {
-      flushedOverlay = overlay;
+    (o: Overlay) => {
+      flushedOverlay.push(o);
     },
   );
 
@@ -212,11 +217,13 @@ test('StreamSmoother keeps the first emit deadline when more buffered deltas arr
   });
 
   t.mock.timers.tick(9);
-  assert.equal(flushedOverlay, null);
+  assert.equal(flushedOverlay.length, 0);
 
   t.mock.timers.tick(1);
-  assert.equal(flushedOverlay?.partsByMessage.get('msg1')?.[0]?.kind, 'text');
-  assert.equal(flushedOverlay?.partsByMessage.get('msg1')?.[0]?.text, 'ab');
+  assert.equal(flushedOverlay.length, 1);
+  const part = flushedOverlay[0].partsByMessage.get('msg1')?.[0];
+  assert.ok(part?.kind === 'text');
+  assert.equal(part.text, 'ab');
   assert.equal(smoother.getPendingCharCount(), 10);
 });
 

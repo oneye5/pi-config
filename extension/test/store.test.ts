@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { ModelInputKind } from '../src/shared/protocol';
 
 // Import the slices and selector directly so tests run without side-effects
 // from the singleton store module.
@@ -399,8 +400,8 @@ test('settingsActions.setModelSettings updates model settings', () => {
 test('settingsActions.setAvailableModels stores model catalogs per session and ignores empty refreshes', () => {
   const { createAppStore } = require('../src/host/store') as typeof import('../src/host/store');
   const store = createAppStore();
-  const aModels = [{ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', reasoning: false }];
-  const bModels = [{ id: 'claude', name: 'Claude', provider: 'anthropic', reasoning: true }];
+  const aModels = [{ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', reasoning: false, inputKinds: ['text'] as ModelInputKind[] }];
+  const bModels = [{ id: 'claude', name: 'Claude', provider: 'anthropic', reasoning: true, inputKinds: ['text'] as ModelInputKind[] }];
 
   store.dispatch(settingsActions.setAvailableModels({ sessionPath: session1.path, availableModels: aModels }));
   store.dispatch(settingsActions.setAvailableModels({ sessionPath: session2.path, availableModels: bModels }));
@@ -633,7 +634,7 @@ test('settingsActions.setModelAndAvailable updates both together for the target 
     name: 'Claude Sonnet',
     provider: 'anthropic',
     reasoning: true,
-    inputKinds: ['text'],
+    inputKinds: ['text'] as ModelInputKind[],
     contextWindow: 200000,
     maxTokens: 8192,
   }];
@@ -727,7 +728,7 @@ test('selectViewState returns available models for the active session only', () 
       name: 'Claude',
       provider: 'anthropic',
       reasoning: true,
-      inputKinds: ['text'],
+      inputKinds: ['text'] as ModelInputKind[],
     }],
   }));
 
@@ -737,7 +738,7 @@ test('selectViewState returns available models for the active session only', () 
     name: 'Claude',
     provider: 'anthropic',
     reasoning: true,
-    inputKinds: ['text'],
+    inputKinds: ['text'] as ModelInputKind[],
   }]);
 });
 

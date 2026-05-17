@@ -17,6 +17,9 @@ const prefs: ChatPrefs = {
   autoExpandToolCalls: true,
   autoExpandSubagentCalls: false,
   suppressCompletionNotifications: false,
+  showPruningMessages: true,
+  extensionToggles: {},
+  providerToggles: {},
 };
 
 test('chat pref menu sections expose transcript and notification toggles', () => {

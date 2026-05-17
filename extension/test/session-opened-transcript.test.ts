@@ -232,7 +232,7 @@ test('busy session.opened preserves messages with running tool calls', () => {
   assert.equal(result.transcript[1].id, 'req-1:1');
   assert.equal(result.transcript[1].toolCalls?.length, 1);
   assert.equal(result.transcript[1].toolCalls?.[0].status, 'running');
-  assert.equal(result.transcript[1].toolCalls?.[0].result?.streamingText, 'partial result...');
+  assert.equal((result.transcript[1].toolCalls?.[0].result as any)?.streamingText, 'partial result...');
 });
 
 test('idle session.opened drops messages with running tool calls (no preserve)', () => {

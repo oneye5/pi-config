@@ -38,6 +38,7 @@ const ANALYTICS_FACTORS: SessionAnalyticsFactors = {
   toolSetHash: 'tool-set-hash',
   skills: [],
   skillSetHash: null,
+  activeExtensions: [],
 };
 
 test('queryRunAnalyticsStore returns finalized snapshots and checkpointed open runs', async () => {

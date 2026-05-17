@@ -75,7 +75,7 @@ test('buildSessionAnalyticsFactors hashes structured prompt, tool, and skill inp
 
     assert.equal(factorsA.promptFamily, 'harness+customPrompt+appendSystemPrompt+promptGuidelines+contextFiles+selectedTools+toolSnippets+skills');
     assert.equal(typeof factorsA.promptHash, 'string');
-    assert.equal(factorsA.promptHash.length, 64);
+    assert.equal(factorsA.promptHash!.length, 64);
     assert.deepEqual(factorsA.selectedToolIds, ['bash', 'read']);
     assert.deepEqual(factorsA.toolSnippetHashes.map((entry) => entry.toolId), ['bash', 'read']);
     assert.equal(factorsA.skills[0]?.name, 'frontend-design');

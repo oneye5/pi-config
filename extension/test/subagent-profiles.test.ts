@@ -118,7 +118,7 @@ test('loadSubagentProfiles reuses cached maps until the file changes and clears 
   assert.deepEqual(reloaded.get('cached'), { eligible: false, aggregate: 20 });
 });
 
-test('loadSubagentProfiles tolerates stat and read races without throwing', () => {
+test('loadSubagentProfiles tolerates stat and read races without throwing', (t) => {
   _clearSubagentProfilesCache();
   const agentDir = makeAgentDir({
     'model-profiles.json': JSON.stringify({
@@ -126,33 +126,16 @@ test('loadSubagentProfiles tolerates stat and read races without throwing', () =
     }),
   });
 
-  const fsModule = require('node:fs') as typeof import('node:fs');
-  const originalStatSync = fsModule.statSync;
-  fsModule.statSync = ((filePath: Parameters<typeof originalStatSync>[0], ...args: Parameters<typeof originalStatSync> extends [any, ...infer Rest] ? Rest : never) => {
-    if (String(filePath).endsWith('model-profiles.json')) {
-      throw new Error('simulated stat race');
-    }
-    return originalStatSync(filePath as any, ...(args as []));
-  }) as typeof originalStatSync;
+  t.mock.method(fs, 'statSync', () => {
+    throw new Error('simulated stat race');
+  });
 
-  try {
-    assert.equal(loadSubagentProfiles(agentDir).size, 0);
-  } finally {
-    fsModule.statSync = originalStatSync;
-  }
+  assert.equal(loadSubagentProfiles(agentDir).size, 0);
 
   _clearSubagentProfilesCache();
-  const originalReadFileSync = fsModule.readFileSync;
-  fsModule.readFileSync = ((filePath: Parameters<typeof originalReadFileSync>[0], ...args: Parameters<typeof originalReadFileSync> extends [any, ...infer Rest] ? Rest : never) => {
-    if (String(filePath).endsWith('model-profiles.json')) {
-      throw new Error('simulated read race');
-    }
-    return originalReadFileSync(filePath as any, ...(args as []));
-  }) as typeof originalReadFileSync;
+  t.mock.method(fs, 'readFileSync', () => {
+    throw new Error('simulated read race');
+  });
 
-  try {
-    assert.equal(loadSubagentProfiles(agentDir).size, 0);
-  } finally {
-    fsModule.readFileSync = originalReadFileSync;
-  }
+  assert.equal(loadSubagentProfiles(agentDir).size, 0);
 });

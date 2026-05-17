@@ -77,7 +77,7 @@ const sampleFactors: SessionAnalyticsFactors = {
   selectedToolIds: ['read'],
   toolSnippetHashes: [{ toolId: 'read', hash: 'snippet-hash' }],
   toolSetHash: 'tool-set-hash',
-  skills: [{ name: 'code-review', contentHash: 'content-hash', sourceHash: 'source-hash', disableModelInvocation: false }],
+  skills: [{ name: 'code-review', contentHash: 'content-hash', sourceHash: 'source-hash', disableModelInvocation: false, lastModifiedAt: null }],
   skillSetHash: 'skill-set-hash',
   activeExtensions: ['subagent'],
 };

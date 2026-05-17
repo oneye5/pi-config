@@ -79,6 +79,7 @@ function createOpenRunSnapshot(sessionPath: string, runId: string): RunSnapshot 
     inputKindsUsed: [],
     toolUsage: createEmptyToolUsageRollup(),
     fileMutation: createEmptyFileMutationRollup(),
+    fileExtensions: { readCountsByExtension: {}, writeCountsByExtension: {}, editCountsByExtension: {} },
     verification: createEmptyVerificationRollup(),
   };
 }
@@ -627,8 +628,10 @@ test('StatsService captures structured analytics factors and experiment assignme
           contentHash: 'skill-hash',
           sourceHash: 'skill-source-hash',
           disableModelInvocation: false,
+          lastModifiedAt: null,
         }],
         skillSetHash: 'skill-set-hash',
+        activeExtensions: [],
       },
     }));
 
@@ -850,6 +853,7 @@ test('StatsService tracks busy durations and mixed treatment changes', async () 
         toolSetHash: 'tools-a',
         skills: [],
         skillSetHash: null,
+        activeExtensions: [],
       },
     }));
 
@@ -889,6 +893,7 @@ test('StatsService tracks busy durations and mixed treatment changes', async () 
       toolSetHash: 'tools-a',
       skills: [],
       skillSetHash: null,
+      activeExtensions: [],
     });
     stats.onExperimentAssignmentChanged('exp-b');
     stats.recordOutcome(sessionPath, { resolution: 'resolved', satisfaction: 4 });

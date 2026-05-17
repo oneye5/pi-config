@@ -84,7 +84,7 @@ function createHarness(overrides: {
         create: (cwd: string) => ({ cwd } as any),
         open: (sessionPath: string) => ({ cwd: '/repo', sessionPath } as any),
       },
-    } as BackendRequestHandlerDeps['sdk'],
+    } as unknown as BackendRequestHandlerDeps['sdk'],
     getSessionContext(sessionPath) {
       return sessionPath === context.sessionPath ? context : undefined;
     },
