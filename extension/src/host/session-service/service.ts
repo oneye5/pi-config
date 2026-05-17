@@ -2,11 +2,14 @@ import * as vscode from 'vscode';
 
 import { BackendClient } from '../backend-client';
 import { resolveChatPrefs } from '../../shared/protocol';
+import type { ChatPrefs, ComposerInputDraft, PruningSettings, ThinkingLevel } from '../../shared/protocol';
 import {
   sessionsActions,
+  settingsActions,
   store,
   uiActions,
 } from '../store';
+import { readPruningSettings, writePruningSettings } from '../pruning-settings';
 import { NOOP_RUN_OBSERVER, type RunObserver } from '../stats-service';
 import { SessionServiceEvents } from './events';
 import { SessionMessageActions } from './message-actions';
@@ -19,7 +22,6 @@ import type {
   PostPatch,
   ScheduleRender,
 } from './types';
-import type { ChatPrefs, ComposerInputDraft, ThinkingLevel } from '../../shared/protocol';
 
 const PREFS_STORAGE_KEY = 'chatPrefs';
 
@@ -134,16 +136,16 @@ export class SessionService implements vscode.Disposable {
     this.messages.removeComposerInput(requestedSessionPath, inputId);
   }
 
-  async send(text: string): Promise<void> {
-    await this.messages.send(text);
+  async send(sessionPath: string, text: string): Promise<void> {
+    await this.messages.send(sessionPath, text);
   }
 
-  async editMessage(messageId: string, text: string): Promise<void> {
-    await this.messages.editMessage(messageId, text);
+  async editMessage(sessionPath: string, messageId: string, text: string): Promise<void> {
+    await this.messages.editMessage(sessionPath, messageId, text);
   }
 
-  async interrupt(): Promise<void> {
-    await this.messages.interrupt();
+  async interrupt(sessionPath: string): Promise<void> {
+    await this.messages.interrupt(sessionPath);
   }
 
   async loadOlderTranscript(sessionPath?: string): Promise<void> {
@@ -197,5 +199,23 @@ export class SessionService implements vscode.Disposable {
     }).catch(() => {
       // Non-fatal: the backend may be restarting or may not support runtime prefs yet.
     });
+  }
+
+  async setPruningSettings(updates: Partial<PruningSettings>): Promise<void> {
+    try {
+      const result = await writePruningSettings(updates);
+      store.dispatch(settingsActions.setPruningSettings(result));
+    } catch (error) {
+      console.warn(`[pie] failed to write pruning settings: ${(error as Error).message}`);
+    }
+  }
+
+  async loadPruningSettings(): Promise<void> {
+    try {
+      const settings = await readPruningSettings();
+      store.dispatch(settingsActions.setPruningSettings(settings));
+    } catch {
+      // Non-fatal; defaults already in store.
+    }
   }
 }

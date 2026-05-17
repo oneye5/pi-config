@@ -15,7 +15,6 @@ const webviewViewName = 'panel';
 const webviewRelativeDir = path.join('webview', webviewViewName);
 const sourceWebviewAssetFileNames = new Set([
   'index.html',
-  `${webviewViewName}.css`,
 ]);
 const hotReloadWebviewFileNames = new Set([
   'index.html',
@@ -24,7 +23,6 @@ const hotReloadWebviewFileNames = new Set([
 ]);
 const copiedAssetRelativePaths = [
   path.join(webviewRelativeDir, 'index.html'),
-  path.join(webviewRelativeDir, `${webviewViewName}.css`),
 ];
 
 let syncTimer;
@@ -59,11 +57,23 @@ function createWebviewBuildOptions() {
   };
 }
 
+function createWebviewCssBuildOptions() {
+  return {
+    entryPoints: [path.join(srcDir, 'webview', webviewViewName, 'styles', 'index.css')],
+    bundle: true,
+    outfile: path.join(outDir, 'webview', webviewViewName, `${webviewViewName}.css`),
+    sourcemap: true,
+    target: 'es2022',
+    loader: { '.css': 'css' },
+  };
+}
+
 function createBuildConfigurations() {
   return [
     createNodeBuildOptions('extension.ts', 'extension.js', { external: ['vscode'] }),
     createNodeBuildOptions(path.join('backend', 'index.ts'), 'backend.js'),
     createWebviewBuildOptions(),
+    createWebviewCssBuildOptions(),
   ];
 }
 

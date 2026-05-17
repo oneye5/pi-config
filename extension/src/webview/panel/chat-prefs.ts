@@ -4,7 +4,8 @@ export type BooleanPrefKey =
   | 'autoExpandReasoning'
   | 'autoExpandToolCalls'
   | 'autoExpandSubagentCalls'
-  | 'suppressCompletionNotifications';
+  | 'suppressCompletionNotifications'
+  | 'showPruningMessages';
 
 export type ChatPrefKey = keyof ChatPrefs;
 export type ChatPrefContextType = 'reasoning' | 'toolCalls' | 'subagentCalls';

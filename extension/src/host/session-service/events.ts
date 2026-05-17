@@ -104,6 +104,8 @@ export class SessionServiceEvents {
     } = payload;
     const state = store.getState();
     const selectionRequest = this.state.getSelectionRequest(selectionToken);
+    const staleSessionData = selectionRequest?.requestEpoch !== undefined
+      && this.state.getSessionDataEpoch(session.path) !== selectionRequest.requestEpoch;
     const shouldOpenTab = !!selectionRequest || state.sessions.openTabPaths.includes(session.path);
     const shouldActivate = selectionToken
       ? this.state.isCurrentSelectionToken(selectionToken)
@@ -114,6 +116,7 @@ export class SessionServiceEvents {
       sessionPath: session.path,
       shouldActivate,
       shouldOpenTab,
+      staleSessionData,
     });
 
     if (selectionRequest?.pendingPath && selectionRequest.pendingPath !== session.path) {
@@ -140,13 +143,13 @@ export class SessionServiceEvents {
       store.dispatch(sessionsActions.setActiveSessionPath(session.path));
     }
     const transcriptResolution = resolveSessionOpenedTranscript({
-      busy: payload.busy,
+      busy: payload.busy || staleSessionData,
       incomingTranscript: transcript,
       incomingTranscriptWindow: transcriptWindow,
       localTranscript: store.getState().transcript.bySession[session.path] ?? [],
     });
 
-    const preserveStreamingState = transcriptResolution.preserveLocal && payload.busy;
+    const preserveStreamingState = transcriptResolution.preserveLocal && (payload.busy || staleSessionData);
     store.dispatch(
       transcriptActions.setTranscript({
         sessionPath: session.path,
@@ -549,6 +552,7 @@ const KNOWN_EXTENSIONS: ExtensionInfo[] = [
   { id: 'subagent', label: 'Subagent', description: 'Delegate tasks to specialized sub-agents' },
   { id: 'safeguard', label: 'Safeguard', description: 'Block dangerous shell commands and file writes' },
   { id: 'cwd-skills', label: 'CWD Skills', description: 'Auto-discover skills from the working directory' },
+  { id: 'skill-pruner', label: 'Skill Pruner', description: 'Score and prune skill descriptions by relevance' },
 ];
 
 const TOOL_TO_EXTENSION: Record<string, string> = {
@@ -568,6 +572,7 @@ function deriveAvailableExtensions(selectedToolIds: string[]): ExtensionInfo[] {
   // The backend doesn't expose hook registration, so we include them by convention.
   activeExtensionIds.add('safeguard');
   activeExtensionIds.add('cwd-skills');
+  activeExtensionIds.add('skill-pruner');
 
   return KNOWN_EXTENSIONS.filter((ext) => activeExtensionIds.has(ext.id));
 }

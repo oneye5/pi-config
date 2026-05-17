@@ -1,10 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { parse as parseYaml } from 'yaml';
+
 import type { ModelSubagentInfo } from '../shared/protocol';
 
 /**
- * Raw profile shape as stored in `<agentDir>/model-profiles.json`.
+ * Raw profile shape as stored in `<agentDir>/model-profiles.{yaml,json}`.
  * The subagent extension owns the authoritative type; we only consume fields needed
  * for picker ordering, so this is intentionally minimal and tolerant.
  */
@@ -15,11 +17,7 @@ interface RawSubagentProfile {
   thoroughness?: unknown;
   reasoning?: unknown;
   eligible?: unknown;
-  _disabled_reason?: unknown;
-}
-
-interface RawSubagentConfig {
-  profiles?: unknown;
+  disabled_reason?: unknown;
 }
 
 interface CacheEntry {
@@ -33,15 +31,12 @@ function toNumber(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
-function parseProfiles(raw: string): Map<string, ModelSubagentInfo> {
+function parseProfilesFromObject(raw: unknown): Map<string, ModelSubagentInfo> {
   const out = new Map<string, ModelSubagentInfo>();
-  let parsed: RawSubagentConfig;
-  try {
-    parsed = JSON.parse(raw) as RawSubagentConfig;
-  } catch {
-    return out;
-  }
-  const profiles = Array.isArray(parsed.profiles) ? parsed.profiles : [];
+  if (!raw || typeof raw !== 'object') return out;
+
+  const cfg = raw as Record<string, unknown>;
+  const profiles = Array.isArray(cfg.profiles) ? cfg.profiles : [];
   for (const entry of profiles as RawSubagentProfile[]) {
     if (!entry || typeof entry.id !== 'string' || entry.id.length === 0) continue;
     const aggregate =
@@ -53,23 +48,46 @@ function parseProfiles(raw: string): Map<string, ModelSubagentInfo> {
       eligible: entry.eligible === true,
       aggregate,
     };
-    if (typeof entry._disabled_reason === 'string' && entry._disabled_reason.length > 0) {
-      info.disabledReason = entry._disabled_reason;
+    if (typeof entry.disabled_reason === 'string' && entry.disabled_reason.length > 0) {
+      info.disabledReason = entry.disabled_reason;
     }
     out.set(entry.id, info);
   }
   return out;
 }
 
+function parseFile(raw: string, ext: string): Map<string, ModelSubagentInfo> {
+  if (ext === '.yaml' || ext === '.yml') {
+    return parseProfilesFromObject(parseYaml(raw));
+  }
+  return parseProfilesFromObject(JSON.parse(raw));
+}
+
+/** Resolve the profiles file, preferring YAML. */
+function resolveProfilesPath(agentDir: string): { filePath: string; ext: string } | null {
+  const yamlPath = path.join(agentDir, 'model-profiles.yaml');
+  if (fs.existsSync(yamlPath)) return { filePath: yamlPath, ext: '.yaml' };
+  const ymlPath = path.join(agentDir, 'model-profiles.yml');
+  if (fs.existsSync(ymlPath)) return { filePath: ymlPath, ext: '.yml' };
+  const jsonPath = path.join(agentDir, 'model-profiles.json');
+  if (fs.existsSync(jsonPath)) return { filePath: jsonPath, ext: '.json' };
+  return null;
+}
+
 /**
  * Load subagent profiles for the picker, keyed by model id. Returns an empty map
- * when the shared `<agentDir>/model-profiles.json` is missing or unreadable so the
+ * when the shared `<agentDir>/model-profiles.{yaml,json}` is missing or unreadable so the
  * picker still renders (and the subagent extension falls back to inheriting the
  * caller's model). Cached by mtime to avoid re-parsing on every `models.list` request.
  */
 export function loadSubagentProfiles(agentDir: string): Map<string, ModelSubagentInfo> {
   if (!agentDir) return new Map();
-  const filePath = path.join(agentDir, 'model-profiles.json');
+  const resolved = resolveProfilesPath(agentDir);
+  if (!resolved) {
+    cache.clear();
+    return new Map();
+  }
+  const { filePath, ext } = resolved;
   let stat: fs.Stats;
   try {
     stat = fs.statSync(filePath);
@@ -81,7 +99,7 @@ export function loadSubagentProfiles(agentDir: string): Map<string, ModelSubagen
   if (cached && cached.mtimeMs === stat.mtimeMs) return cached.map;
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
-    const map = parseProfiles(raw);
+    const map = parseFile(raw, ext);
     cache.set(filePath, { mtimeMs: stat.mtimeMs, map });
     return map;
   } catch {

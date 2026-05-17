@@ -13,4 +13,5 @@ export type SelectionRequest = {
   insertedPlaceholder: boolean;
   previousActivePath: string | null;
   wasOpenTab: boolean;
+  requestEpoch?: number;
 };

@@ -12,7 +12,9 @@ import {
   formatTimestamp,
   roleLabel,
 } from './header';
+import { InlineEditor } from './inline-editor';
 import { shouldOpenUserMessageEditor } from './interactions';
+import { PruningInlineCard, isPruningDetails } from './pruning-inline';
 
 import {
   assistantPartsFromMessage,
@@ -69,77 +71,6 @@ export function ReasoningBlock({ text, autoExpand, disclosureKey, onContextMenu 
   );
 }
 
-interface InlineEditorProps {
-  initialText: string;
-  onConfirm: (text: string) => void;
-  onCancel: () => void;
-}
-
-function InlineEditor({ initialText, onConfirm, onCancel }: InlineEditorProps) {
-  const [text, setText] = useState(initialText);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
-  }, []);
-
-  const handleInput = useCallback((e: Event) => {
-    const el = e.target as HTMLTextAreaElement;
-    setText(el.value);
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
-  }, []);
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.isComposing || e.keyCode === 229) {
-      return;
-    }
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (text.trim()) onConfirm(text);
-    } else if (e.key === 'Escape') {
-      onCancel();
-    }
-  }, [text, onConfirm, onCancel]);
-
-  return (
-    <div class="inline-editor">
-      <textarea
-        ref={textareaRef}
-        class="inline-editor-textarea"
-        value={text}
-        onInput={handleInput}
-        onKeyDown={handleKeyDown}
-        aria-label="Edit message"
-        placeholder="Edit message…"
-      />
-      <div class="inline-editor-actions">
-        <button
-          class="action-btn secondary"
-          type="button"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          class="action-btn primary"
-          type="button"
-          disabled={!text.trim()}
-          onClick={() => { if (text.trim()) onConfirm(text); }}
-        >
-          Save
-        </button>
-      </div>
-    </div>
-  );
-}
-
 interface MessageItemProps {
   message: ChatMessage;
   overlayParts?: ChatMessagePart[];
@@ -173,6 +104,17 @@ function MessageItemView({
   renderToolCall,
   isLastAssistantMessage,
 }: MessageItemProps) {
+  // Render dedicated inline card for pruning-result custom messages.
+  if (message.customType === 'pruning-result' && isPruningDetails(message.customDetails)) {
+    return (
+      <PruningInlineCard
+        details={message.customDetails}
+        fallbackText={message.markdown}
+        createdAt={message.createdAt}
+      />
+    );
+  }
+
   const combinedParts = useMemo(() => (
     message.role === 'assistant'
       ? mergeAssistantParts(assistantPartsFromMessage(message), overlayParts)
@@ -197,6 +139,20 @@ function MessageItemView({
   ), [combinedParts, message.role, message.toolCalls]);
   const isCurrentlyStreaming = isStreaming && ((overlayParts?.length ?? 0) > 0 || message.status === 'streaming');
   const isEditing = editingId === message.id;
+
+  // Capture message body height for no-shift editing (Phase 5)
+  const messageBodyRef = useRef<HTMLDivElement>(null);
+  const [capturedHeight, setCapturedHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const el = messageBodyRef.current;
+    if (!el || message.role !== 'user') return;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setCapturedHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [message.role]);
+
   const createdAtLabel = formatTimestamp(message.createdAt);
   const statusLabel =
     message.status === 'interrupted' ? 'Interrupted'
@@ -273,6 +229,7 @@ function MessageItemView({
       {isEditing ? (
         <InlineEditor
           initialText={message.markdown}
+          capturedHeight={capturedHeight}
           onConfirm={(text) => onEditConfirm(message.id, text)}
           onCancel={onEditCancel}
         />
@@ -318,6 +275,7 @@ function MessageItemView({
                 <div
                   key={`user-text-${message.id}-${index}`}
                   class="message-body"
+                  ref={index === 0 ? messageBodyRef : undefined}
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text) }}
                 />
               ) : (
@@ -339,6 +297,7 @@ function MessageItemView({
           ) : (
             <div
               class="message-body"
+              ref={message.role === 'user' ? messageBodyRef : undefined}
               dangerouslySetInnerHTML={{ __html: html }}
               onContextMenu={message.role === 'assistant' ? (e) => {
                 e.preventDefault();

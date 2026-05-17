@@ -357,13 +357,15 @@ test('WebviewToHostMessage.removeComposerInput targets an assigned input id', ()
   }
 });
 
-test('WebviewToHostMessage.send accepts text-only payloads', () => {
+test('WebviewToHostMessage.send carries an explicit sessionPath', () => {
   const msg: WebviewToHostMessage = {
     type: 'send',
+    sessionPath: '/workspace/session.jsonl',
     text: 'hello',
   };
   assert.equal(msg.type, 'send');
   if (msg.type === 'send') {
+    assert.equal(msg.sessionPath, '/workspace/session.jsonl');
     assert.equal(msg.text, 'hello');
   }
 });

@@ -72,6 +72,47 @@ test('resolveNodePath falls back to PATH lookup', () => {
   assert.equal(nodePath, expectedPath);
 });
 
+test('resolveNodePath honors PI_NODE_PATH before searching PATH', () => {
+  const nodePath = resolveNodePath({
+    env: {
+      PI_NODE_PATH: '/custom/node',
+      PATH: '/usr/bin:/bin',
+    },
+    platform: 'linux',
+    exists: (filePath) => filePath === '/custom/node',
+  });
+
+  assert.equal(nodePath, '/custom/node');
+});
+
+test('resolveNodePath rejects missing configured and environment paths and errors when nothing is discoverable', () => {
+  assert.throws(
+    () => resolveNodePath({
+      configuredPath: '/missing/node',
+      env: {},
+      exists: () => false,
+    }),
+    /Configured PI nodePath does not exist: \/missing\/node/,
+  );
+
+  assert.throws(
+    () => resolveNodePath({
+      env: { PI_NODE_PATH: '/missing/env-node' },
+      exists: () => false,
+    }),
+    /PI_NODE_PATH does not exist: \/missing\/env-node/,
+  );
+
+  assert.throws(
+    () => resolveNodePath({
+      env: { PATH: '/usr/local/bin:/usr/bin' },
+      platform: 'linux',
+      exists: () => false,
+    }),
+    /Could not find a standalone Node\.js runtime/,
+  );
+});
+
 test('resolveSdkPath prefers configured sdk path', async () => {
   const packageJsonPath = path.join('/opt/pi-sdk', 'package.json');
   const indexJsPath = path.join('/opt/pi-sdk', 'dist', 'index.js');
@@ -83,6 +124,47 @@ test('resolveSdkPath prefers configured sdk path', async () => {
   });
 
   assert.equal(sdkPath, '/opt/pi-sdk');
+});
+
+test('resolveSdkPath honors PI_SDK_PATH before consulting cached or global installs', async () => {
+  const envSdkPath = '/env/pi-sdk';
+  const packageJsonPath = path.join(envSdkPath, 'package.json');
+  const indexJsPath = path.join(envSdkPath, 'dist', 'index.js');
+  let execCalls = 0;
+
+  const sdkPath = await resolveSdkPath({
+    env: { PI_SDK_PATH: envSdkPath },
+    cachedPath: '/cache/pi-sdk',
+    exists: (filePath) => filePath === packageJsonPath || filePath === indexJsPath,
+    exec: async () => {
+      execCalls += 1;
+      return { stdout: '', stderr: '', exitCode: 0 };
+    },
+  });
+
+  assert.equal(sdkPath, envSdkPath);
+  assert.equal(execCalls, 0);
+});
+
+test('resolveSdkPath rejects invalid configured and environment SDK paths', async () => {
+  await assert.rejects(
+    () => resolveSdkPath({
+      configuredPath: '/invalid/configured-sdk',
+      env: {},
+      exists: () => false,
+      exec: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+    }),
+    /Configured PI sdkPath is not a valid SDK install: \/invalid\/configured-sdk/,
+  );
+
+  await assert.rejects(
+    () => resolveSdkPath({
+      env: { PI_SDK_PATH: '/invalid/env-sdk' },
+      exists: () => false,
+      exec: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+    }),
+    /PI_SDK_PATH is not a valid SDK install: \/invalid\/env-sdk/,
+  );
 });
 
 test('resolveSdkPath prefers a cached valid SDK path before shelling out to npm', async () => {

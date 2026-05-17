@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { meanDifferenceInterval, meanInterval, wilsonInterval } from '../site/chart-stats.ts';
+import { mean, meanDifferenceInterval, meanInterval, wilsonInterval } from '../site/chart-stats.ts';
 
 describe('chart statistics helpers', () => {
   it('computes bounded t confidence intervals for satisfaction means', () => {
@@ -43,5 +43,41 @@ describe('chart statistics helpers', () => {
     assert.equal(estimate?.ciEstimated, true);
     assert.ok((estimate?.lower ?? -5) >= -4);
     assert.ok((estimate?.upper ?? 5) <= 4);
+  });
+
+  it('returns null for empty samples and invalid totals', () => {
+    assert.equal(mean([]), null);
+    assert.equal(meanInterval([], { min: 1, max: 5 }), null);
+    assert.equal(wilsonInterval(1, 0), null);
+    assert.equal(meanDifferenceInterval([], [1, 2], { min: -5, max: 5 }), null);
+  });
+
+  it('handles low-sample and zero-variance difference edge cases', () => {
+    const lowSample = meanDifferenceInterval([10], [2, 4, 6], { min: -5, max: 5 });
+    assert.equal(lowSample?.ciEstimated, false);
+    assert.equal(lowSample?.difference, 5);
+    assert.equal(lowSample?.lower, 5);
+    assert.equal(lowSample?.upper, 5);
+
+    const zeroVariance = meanDifferenceInterval([3, 3, 3], [1, 1, 1], { min: -5, max: 5 });
+    assert.equal(zeroVariance?.ciEstimated, true);
+    assert.equal(zeroVariance?.difference, 2);
+    assert.equal(zeroVariance?.lower, 2);
+    assert.equal(zeroVariance?.upper, 2);
+    assert.match(zeroVariance?.ciLabel ?? '', /^95% CI /);
+  });
+
+  it('exercises t-critical lookup ranges via mean interval sample sizes', () => {
+    const sampleSizes = [2, 31, 41, 61, 121, 122];
+    for (const size of sampleSizes) {
+      const values = Array.from({ length: size }, (_, index) => (index % 9) + 1);
+      const estimate = meanInterval(values, { min: 0, max: 10 });
+      assert.equal(estimate?.ciEstimated, true);
+      assert.match(estimate?.ciLabel ?? '', /^95% CI /);
+    }
+
+    const allSuccesses = wilsonInterval(3, 3);
+    assert.equal(allSuccesses?.rate, 1);
+    assert.equal(allSuccesses?.upper, 1);
   });
 });

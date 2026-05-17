@@ -155,7 +155,7 @@ export class BackendServer {
       // Default: check if agentDir is inside a git tree.
       const agentDirAuthPath = path.resolve(this.agentDir, 'auth.json');
       if (await isInsideGitWorkTree(agentDirAuthPath)) {
-        const allowInTree = process.env.PIE_ALLOW_IN_TREE_SECRETS === '1';
+        const allowInTree = process.env.PIE_ALLOW_IN_TREE_AUTH === '1';
         if (allowInTree) {
           authPath = agentDirAuthPath;
         } else {
@@ -236,7 +236,7 @@ export class BackendServer {
   ): Promise<SessionContext> {
     const previousSessionFile = this.viewedSessionPath;
     const runtime = await this.sdk.createAgentSessionRuntime(this.createRuntimeFactory(), {
-      cwd: sessionManager.getCwd(),
+      cwd: sessionManager.getCwd() || this.startupCwd,
       agentDir: this.agentDir,
       sessionManager,
       sessionStartEvent: previousSessionFile
@@ -319,7 +319,7 @@ export class BackendServer {
       sessionPath: context.sessionPath,
       transcript: page.transcript,
       transcriptWindow: page.transcriptWindow,
-      busy: context.session.isStreaming,
+      busy: context.session.isStreaming || !!context.activeRequest,
     };
   }
 
@@ -466,7 +466,7 @@ export class BackendServer {
       session: buildCurrentSummary(context, this.startupCwd),
       transcript: transcriptSlice.transcript,
       transcriptWindow: transcriptSlice.transcriptWindow,
-      busy: context.session.isStreaming,
+      busy: context.session.isStreaming || !!context.activeRequest,
       selectionToken,
       systemPrompts,
       analyticsFactors,

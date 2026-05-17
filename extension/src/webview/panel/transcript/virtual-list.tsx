@@ -4,8 +4,9 @@
 import { Virtualizer, elementScroll, observeElementOffset, observeElementRect } from '@tanstack/virtual-core';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 
-import { type ChatMessage, type ChatPrefs, type SystemPromptEntry, type ToolCall, type TranscriptWindow } from '../../../shared/protocol';
+import { type ChatMessage, type ChatPrefs, type PruningResult, type SystemPromptEntry, type ToolCall, type TranscriptWindow } from '../../../shared/protocol';
 import type { Overlay } from '../overlay';
+// Phase 4: overlay kept in props for row rendering; hasStreamingContent replaces overlay in scroll hook.
 import { ToolCallItem } from './tool-call-item';
 import { useTranscriptScroll } from './use-transcript-scroll';
 import type { RenderToolCall, TranscriptContextMenuHandler } from './types';
@@ -20,6 +21,7 @@ interface TranscriptVirtualListProps {
   overlay: Overlay;
   prefs: ChatPrefs;
   systemPrompts: SystemPromptEntry[];
+  pruningResult: PruningResult | null;
   workingDirectory: string | null;
   editingId: string | null;
   onEditRequest: (messageId: string) => void;
@@ -44,6 +46,7 @@ export function TranscriptVirtualList({
   overlay,
   prefs,
   systemPrompts,
+  pruningResult,
   workingDirectory,
   editingId,
   onEditRequest,
@@ -79,7 +82,7 @@ export function TranscriptVirtualList({
     transcriptWindow,
     transcriptLength: transcript.length,
     busy,
-    overlay,
+    hasStreamingContent: overlay.partsByMessage.size > 0,
     onLoadOlder,
     onLoadNewer,
     onJumpToLatest,
@@ -113,28 +116,25 @@ export function TranscriptVirtualList({
   }
 
   const virtualizer = virtualizerRef.current;
-  virtualizer.setOptions({
-    ...virtualizer.options,
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => estimateTranscriptRowSize(rows[index] ?? fallbackTranscriptRow(rows)),
-    getItemKey: (index) => rows[index]?.key ?? index,
-    scrollToFn: elementScroll,
-    observeElementRect,
-    observeElementOffset,
-    initialOffset: () => Number.MAX_SAFE_INTEGER,
-    overscan: 10,
-    onChange: scheduleVirtualRender,
-  });
+
+  // Update virtualizer options only when relevant deps change
+  useLayoutEffect(() => {
+    virtualizer.setOptions({
+      ...virtualizer.options,
+      count: rows.length,
+      getScrollElement: () => scrollRef.current,
+      estimateSize: (index) => estimateTranscriptRowSize(rows[index] ?? fallbackTranscriptRow(rows)),
+      getItemKey: (index) => rows[index]?.key ?? index,
+      overscan: 10,
+      onChange: scheduleVirtualRender,
+    });
+    virtualizer._willUpdate();
+  }, [rows, scheduleVirtualRender, virtualizer]);
 
   useEffect(() => {
     const cleanup = virtualizer._didMount();
     return cleanup;
   }, [virtualizer]);
-
-  useLayoutEffect(() => {
-    virtualizer._willUpdate();
-  }, [renderTick, rows.length, virtualizer]);
 
   useEffect(() => () => {
     if (renderFrameRef.current !== null) {
@@ -189,6 +189,7 @@ export function TranscriptVirtualList({
                 overlay={overlay}
                 prefs={prefs}
                 systemPrompts={systemPrompts}
+                pruningResult={pruningResult}
                 workingDirectory={workingDirectory}
                 editingId={editingId}
                 isLoadingOlder={isLoadingOlder}

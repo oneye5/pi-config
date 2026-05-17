@@ -20,7 +20,8 @@ function clonePart(part: ChatMessagePart): ChatMessagePart {
   return { kind: part.kind, text: part.text };
 }
 
-function appendTextPart(parts: ChatMessagePart[], kind: 'text' | 'reasoning', text: string): void {
+/** Append text/reasoning to a parts array (mutates in place). Exported for per-message signal use. */
+export function appendTextToParts(parts: ChatMessagePart[], kind: 'text' | 'reasoning', text: string): void {
   if (!text) {
     return;
   }
@@ -34,7 +35,8 @@ function appendTextPart(parts: ChatMessagePart[], kind: 'text' | 'reasoning', te
   parts.push({ kind, text });
 }
 
-function upsertToolCallPart(parts: ChatMessagePart[], toolCall: ToolCall): void {
+/** Upsert a tool call part by id (mutates in place). Exported for per-message signal use. */
+export function upsertToolCallInParts(parts: ChatMessagePart[], toolCall: ToolCall): void {
   const nextToolCall = cloneToolCall(toolCall);
   const index = parts.findIndex(
     (part) => part.kind === 'toolCall' && part.toolCall.id === nextToolCall.id,
@@ -46,6 +48,10 @@ function upsertToolCallPart(parts: ChatMessagePart[], toolCall: ToolCall): void 
 
   parts[index] = { kind: 'toolCall', toolCall: nextToolCall };
 }
+
+// Internal aliases for backward compat within applyPatch
+const appendTextPart = appendTextToParts;
+const upsertToolCallPart = upsertToolCallInParts;
 
 export function applyPatch(overlay: Overlay, op: PatchOp): Overlay {
   const next: Overlay = {

@@ -1,0 +1,106 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+
+import { DEFAULT_PRUNING_SETTINGS, type PruningMode, type PruningSettings } from '../shared/protocol';
+
+/**
+ * Resolve the settings.json path from PI_CODING_AGENT_DIR.
+ * Returns null if the env var is not set.
+ */
+function resolveSettingsPath(): string | null {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (!agentDir) {
+    return null;
+  }
+  return path.join(agentDir, 'settings.json');
+}
+
+const VALID_MODES = new Set<PruningMode>(['auto', 'shadow', 'off']);
+
+/**
+ * Read the pruning settings from the on-disk settings.json.
+ * Returns defaults when the file is missing or the pruning key is absent.
+ */
+export async function readPruningSettings(): Promise<PruningSettings> {
+  const settingsPath = resolveSettingsPath();
+  if (!settingsPath) {
+    return { ...DEFAULT_PRUNING_SETTINGS };
+  }
+
+  try {
+    const raw = await fs.readFile(settingsPath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const pruning = parsed.pruning as Record<string, unknown> | undefined;
+    if (!pruning || typeof pruning !== 'object') {
+      return { ...DEFAULT_PRUNING_SETTINGS };
+    }
+
+    const mode = typeof pruning.mode === 'string' && VALID_MODES.has(pruning.mode as PruningMode)
+      ? (pruning.mode as PruningMode)
+      : DEFAULT_PRUNING_SETTINGS.mode;
+
+    const skills = pruning.skills as Record<string, unknown> | undefined;
+    const tools = pruning.tools as Record<string, unknown> | undefined;
+
+    const skillCeiling = typeof skills?.ceiling === 'number' && skills.ceiling >= 1
+      ? skills.ceiling
+      : DEFAULT_PRUNING_SETTINGS.skillCeiling;
+
+    const toolCeiling = typeof tools?.ceiling === 'number' && tools.ceiling >= 1
+      ? tools.ceiling
+      : DEFAULT_PRUNING_SETTINGS.toolCeiling;
+
+    return { mode, skillCeiling, toolCeiling };
+  } catch {
+    return { ...DEFAULT_PRUNING_SETTINGS };
+  }
+}
+
+/**
+ * Write a partial pruning settings update to settings.json.
+ * Deep-merges into the existing `pruning` key so other fields
+ * (pinned skills, tiers, dependencies, etc.) are preserved.
+ */
+export async function writePruningSettings(
+  updates: Partial<PruningSettings>,
+): Promise<PruningSettings> {
+  const settingsPath = resolveSettingsPath();
+  if (!settingsPath) {
+    throw new Error('PI_CODING_AGENT_DIR is not set; cannot write pruning settings.');
+  }
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // File may not exist yet — start fresh.
+  }
+
+  const pruning = (existing.pruning && typeof existing.pruning === 'object'
+    ? { ...(existing.pruning as Record<string, unknown>) }
+    : {}) as Record<string, unknown>;
+
+  if (updates.mode !== undefined) {
+    pruning.mode = updates.mode;
+  }
+
+  if (updates.skillCeiling !== undefined) {
+    const skills = (pruning.skills && typeof pruning.skills === 'object'
+      ? { ...(pruning.skills as Record<string, unknown>) }
+      : {}) as Record<string, unknown>;
+    skills.ceiling = updates.skillCeiling;
+    pruning.skills = skills;
+  }
+
+  if (updates.toolCeiling !== undefined) {
+    const tools = (pruning.tools && typeof pruning.tools === 'object'
+      ? { ...(pruning.tools as Record<string, unknown>) }
+      : {}) as Record<string, unknown>;
+    tools.ceiling = updates.toolCeiling;
+    pruning.tools = tools;
+  }
+
+  existing.pruning = pruning;
+  await fs.writeFile(settingsPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+  return await readPruningSettings();
+}

@@ -1,10 +1,12 @@
 {
   "name": "pi-config",
   "private": true,
-  "//workspaces": "npm workspaces are intentionally NOT enabled. extensions/subagent and extensions/cwd-skills do not yet have package.json files; activating workspaces here would break root npm install. Track enabling this in docs/INSTALLATION_INFRA_PLAN.md.",
+  "//workspaces": "npm workspaces are intentionally NOT enabled. extensions/subagent, extensions/cwd-skills, and extensions/skill-pruner do not yet have package.json files; activating workspaces here would break root npm install. Track enabling this in docs/INSTALLATION_INFRA_PLAN.md.",
   "scripts": {
+    "test": "node ./scripts/run-tests.mjs",
+    "typecheck": "npm run extension:typecheck && npm run analytics:typecheck",
     "analytics:typecheck": "npm --prefix analysis run typecheck --",
-    "analytics:test": "npm --prefix analysis run test --",
+    "analytics:test": "node ./scripts/run-tests.mjs --package analysis",
     "analytics:build-db": "npm --prefix analysis run build-db --",
     "analytics:query": "npm --prefix analysis run query --",
     "analytics:export-site-data": "npm --prefix analysis run export-site-data --",
@@ -13,10 +15,8 @@
     "analytics:serve": "npm --prefix analysis run serve --",
     "analytics:validate": "npm --prefix analysis run validate --",
     "extension:build": "npm --prefix extension run build --",
-    "extension:test": "npm --prefix extension run test --",
+    "extension:test": "node ./scripts/run-tests.mjs --package extension",
     "extension:typecheck": "npm --prefix extension run typecheck --",
-    "extensions:test": "npx tsx --test extensions/*/test/*.test.ts",
-    "ci:typecheck": "npm run extension:typecheck && npm run analytics:typecheck",
-    "ci:test": "npm run extension:test && npm run extensions:test && npm run analytics:test"
+    "extensions:test": "node ./scripts/run-tests.mjs --package cwd-skills --package safeguard --package skill-pruner --package subagent"
   }
 }

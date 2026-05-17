@@ -1,0 +1,316 @@
+﻿.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.context-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--panel-hover-surface));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
+.context-menu-check {
+  flex-shrink: 0;
+  color: var(--panel-accent);
+}
+
+.composer-attachments {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-start;
+}
+
+.composer-attachments-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  background: color-mix(in srgb, var(--panel-subtle-surface) 78%, transparent);
+  color: var(--panel-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.composer-attachments-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  scrollbar-width: thin;
+}
+
+.attachment-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(100%, 220px);
+  flex: 0 1 auto;
+  padding: 3px 4px 3px 3px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-subtle-surface) 82%, transparent),
+    color-mix(in srgb, var(--panel-code-surface) 66%, transparent)
+  );
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.attachment-card:hover,
+.attachment-card:focus-within {
+  border-color: var(--panel-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-hover-surface) 80%, transparent),
+    color-mix(in srgb, var(--panel-subtle-surface) 68%, transparent)
+  );
+}
+
+.attachment-card-thumb,
+.attachment-card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.attachment-card-thumb {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 88%, transparent);
+  background: var(--panel-code-surface);
+}
+
+.attachment-card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--panel-accent);
+  background: color-mix(in srgb, var(--panel-accent-surface) 72%, var(--panel-subtle-surface));
+  border: 1px solid color-mix(in srgb, var(--panel-accent) 14%, transparent);
+}
+
+.attachment-card-meta {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.attachment-card-name,
+.attachment-card-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-card-name {
+  color: var(--vscode-foreground);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.attachment-card-detail {
+  color: var(--panel-muted);
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.attachment-card-remove {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--panel-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.attachment-card-remove:hover,
+.attachment-card-remove:focus-visible {
+  background: var(--panel-hover-surface);
+  color: var(--vscode-foreground);
+}
+
+.attachment-card-remove:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--panel-accent));
+  outline-offset: 1px;
+}
+
+.composer-input-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--vscode-input-background, var(--panel-surface));
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.composer-input-shell.drag-active {
+  border-color: var(--panel-accent);
+  background: var(--panel-accent-surface);
+}
+
+.composer-textarea {
+  width: 100%;
+  min-height: 40px;
+  max-height: 200px;
+  padding: 0;
+  border: none;
+  resize: none;
+  background: transparent;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  line-height: 1.5;
+  outline: none;
+  overflow-y: auto;
+}
+
+.composer-textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--panel-muted));
+}
+
+.composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--panel-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.composer-hint-error {
+  color: var(--panel-warning);
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes session-tab-unread-flash {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px var(--session-tab-outline);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--panel-success) 42%, var(--session-tab-outline)),
+      0 0 0 1px color-mix(in srgb, var(--panel-success) 14%, transparent);
+  }
+}
+
+.transcript-typing-indicator {
+  display: none; /* Removed - replaced with glow indicator */
+}
+
+.message-glow-indicator {
+  position: relative;
+  height: 1px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.message-glow-indicator::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--panel-accent, var(--panel-muted)) 50%,
+    transparent 100%
+  );
+  animation: message-glow-pulse 4s ease-in-out infinite;
+}
+
+@keyframes message-glow-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scaleX(0.5);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-typing-dot {
+    animation: none;
+    opacity: 0.7;
+  }
+
+  .session-tab-running,
+  .session-tab.unread-finished:not(.active) .session-tab-shell {
+    animation: none;
+  }
+}
+
+/* ── File Changes Panel ───────────────────────────────────────────────────── */
+

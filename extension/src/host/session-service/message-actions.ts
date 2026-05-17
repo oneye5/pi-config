@@ -149,9 +149,9 @@ export class SessionMessageActions {
     this.scheduleRender();
   }
 
-  async send(text: string): Promise<void> {
-    const attemptedSessionPath = selectActiveSessionPath(store.getState()) ?? '__unknown__';
-    const sessionPath = this.requireActiveOpenSessionPath('send');
+  async send(requestedSessionPath: string, text: string): Promise<void> {
+    const attemptedSessionPath = requestedSessionPath;
+    const sessionPath = this.requireOpenSessionPath('send', requestedSessionPath);
     if (!sessionPath) {
       this.postImperative({ type: 'sendRejected', sessionPath: attemptedSessionPath, text });
       return;
@@ -164,6 +164,7 @@ export class SessionMessageActions {
       return;
     }
 
+    this.state.bumpSessionDataEpoch(sessionPath);
     this.runObserver.prepareForSend(sessionPath, inputs);
 
     const composedText = buildPromptText(text, inputs);
@@ -220,14 +221,15 @@ export class SessionMessageActions {
     }
   }
 
-  async editMessage(messageId: string, text: string): Promise<void> {
-    const sessionPath = this.requireActiveOpenSessionPath('edit');
+  async editMessage(requestedSessionPath: string, messageId: string, text: string): Promise<void> {
+    const sessionPath = this.requireOpenSessionPath('edit', requestedSessionPath);
     if (!sessionPath) {
       return;
     }
 
     let localId: string | null = null;
 
+    this.state.bumpSessionDataEpoch(sessionPath);
     auditLog(this.context, 'session-service', 'message.edit.requested', {
       messageId,
       sessionPath,
@@ -276,25 +278,25 @@ export class SessionMessageActions {
     }
   }
 
-  async interrupt(): Promise<void> {
-    const activeSessionPath = this.requireActiveOpenSessionPath('interrupt');
-    if (!activeSessionPath) {
+  async interrupt(requestedSessionPath: string): Promise<void> {
+    const sessionPath = this.requireOpenSessionPath('interrupt', requestedSessionPath);
+    if (!sessionPath) {
       return;
     }
 
     auditLog(this.context, 'session-service', 'message.interrupt.requested', {
-      sessionPath: activeSessionPath,
+      sessionPath,
     });
 
     try {
       await this.state.enqueueLifecycle(async () => {
-        await this.state.enqueueSessionOperation(activeSessionPath, async () => {
+        await this.state.enqueueSessionOperation(sessionPath, async () => {
           await this.backend.request('message.interrupt', {
-            sessionPath: activeSessionPath,
+            sessionPath,
           });
         });
       });
-      this.state.suppressNextCompletionNotificationFor(activeSessionPath);
+      this.state.suppressNextCompletionNotificationFor(sessionPath);
     } catch (err) {
       store.dispatch(
         uiActions.setNotice(`Failed to interrupt: ${(err as Error).message}`),
@@ -517,10 +519,6 @@ export class SessionMessageActions {
       return null;
     }
     return resolvedSessionPath;
-  }
-
-  private requireActiveOpenSessionPath(actionName: string): string | null {
-    return this.requireOpenSessionPath(actionName);
   }
 
   private maybeApplyOptimisticSessionName(sessionPath: string, text: string) {

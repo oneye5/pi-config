@@ -1,9 +1,13 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { PruningDecision, PruningMode, ScoredSkill } from "./types.js";
+import type { PruningDecision, PruningMode } from "./types.js";
+
+/** Root of the pi-config repo, resolved from this extension's known position. */
+const CONFIG_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
 interface SessionTracking {
 	mode: PruningMode;
+	knownSkillPathsLowercase: Set<string>;
 	prunedSkillPathsLowercase: Set<string>;
 	shadowPrunedPathsLowercase: Set<string>;
 	skillNamesByPath: Map<string, string>;
@@ -20,7 +24,7 @@ const sessionTracking = new Map<string, SessionTracking>();
 let logPathOverride: string | null = null;
 
 function getLogPath(): string {
-	return logPathOverride ?? path.join(import.meta.dirname, "..", "..", "data", "pruning.jsonl");
+	return logPathOverride ?? path.join(CONFIG_ROOT, "data", "pruning.jsonl");
 }
 
 function normalizeSkillPath(readPath: string): string {
@@ -42,29 +46,33 @@ export function appendDecision(decision: PruningDecision): PruningDecision {
 	return decision;
 }
 
-export function recordPruningOutcome(
+export function recordKnownSkills(
 	sessionId: string,
 	mode: PruningMode,
-	prunedSkills: ScoredSkill[],
-	shadowPrunedSkills: ScoredSkill[],
+	allSkillPaths: string[],
+	prunedPaths: string[],
+	shadowPrunedPaths: string[],
 ): void {
 	const tracking: SessionTracking = {
 		mode,
+		knownSkillPathsLowercase: new Set(),
 		prunedSkillPathsLowercase: new Set(),
 		shadowPrunedPathsLowercase: new Set(),
 		skillNamesByPath: new Map(),
 	};
 
-	for (const skill of prunedSkills) {
-		const normalizedPath = normalizeSkillPath(skill.skill.filePath);
-		tracking.prunedSkillPathsLowercase.add(normalizedPath);
-		tracking.skillNamesByPath.set(normalizedPath, skill.name);
+	for (const skillPath of allSkillPaths) {
+		const normalizedPath = normalizeSkillPath(skillPath);
+		tracking.knownSkillPathsLowercase.add(normalizedPath);
+		tracking.skillNamesByPath.set(normalizedPath, deriveSkillName(skillPath));
 	}
 
-	for (const skill of shadowPrunedSkills) {
-		const normalizedPath = normalizeSkillPath(skill.skill.filePath);
-		tracking.shadowPrunedPathsLowercase.add(normalizedPath);
-		tracking.skillNamesByPath.set(normalizedPath, skill.name);
+	for (const skillPath of prunedPaths) {
+		tracking.prunedSkillPathsLowercase.add(normalizeSkillPath(skillPath));
+	}
+
+	for (const skillPath of shadowPrunedPaths) {
+		tracking.shadowPrunedPathsLowercase.add(normalizeSkillPath(skillPath));
 	}
 
 	sessionTracking.set(sessionId, tracking);
@@ -73,17 +81,21 @@ export function recordPruningOutcome(
 export function recordSkillRead(sessionId: string, readPath: string): void {
 	const normalizedPath = normalizeSkillPath(readPath);
 	const tracking = sessionTracking.get(sessionId);
-	const skillName = tracking?.skillNamesByPath.get(normalizedPath) ?? deriveSkillName(readPath);
-	const timestamp = new Date().toISOString();
 
-	appendJsonLine({ event: "skill_read", skillName, sessionId, timestamp });
-
-	if (tracking?.mode === "auto" && tracking.prunedSkillPathsLowercase.has(normalizedPath)) {
-		appendJsonLine({ event: "skill_miss", skillName, sessionId, timestamp: new Date().toISOString() });
+	// Only fire events when the path is a known skill path.
+	if (!tracking?.knownSkillPathsLowercase.has(normalizedPath)) {
+		return;
 	}
 
-	if (tracking?.mode === "shadow" && tracking.shadowPrunedPathsLowercase.has(normalizedPath)) {
-		appendJsonLine({ event: "shadow_miss_candidate", skillName, sessionId, timestamp: new Date().toISOString() });
+	const skillName = tracking.skillNamesByPath.get(normalizedPath) ?? deriveSkillName(readPath);
+	const timestamp = new Date().toISOString();
+
+	if (tracking.mode === "auto" && tracking.prunedSkillPathsLowercase.has(normalizedPath)) {
+		appendJsonLine({ event: "skill_miss", skillName, sessionId, timestamp });
+	} else if (tracking.mode === "shadow" && tracking.shadowPrunedPathsLowercase.has(normalizedPath)) {
+		appendJsonLine({ event: "shadow_miss_candidate", skillName, sessionId, timestamp });
+	} else {
+		appendJsonLine({ event: "skill_read", skillName, sessionId, timestamp });
 	}
 }
 

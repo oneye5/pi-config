@@ -4,10 +4,11 @@ import * as vscode from 'vscode';
 
 import { BackendClient } from '../backend-client';
 import { buildRestoredSessionPlan } from '../restored-session-plan';
-import { sessionsActions, store, uiActions } from '../store';
+import { sessionsActions, settingsActions, store, uiActions } from '../store';
 import { normalizeStoredOpenTabPaths, isPendingTabPath } from '../../shared/tab-behavior';
 import { createCommandExecutor } from '../../shared/exec-command';
 import { resolveChatPrefs } from '../../shared/protocol';
+import { readPruningSettings } from '../pruning-settings';
 import { resolveNodePath, resolveSdkPath } from '../../shared/runtime-resolution';
 import type { ChatPrefs, SessionSummary } from '../../shared/protocol';
 import { SessionServiceEvents } from './events';
@@ -39,6 +40,12 @@ export async function startSessionBackend(options: StartSessionBackendOptions): 
   if (storedPrefs) {
     store.dispatch(uiActions.setPrefs(resolveChatPrefs(storedPrefs)));
   }
+
+  // Load pruning settings from settings.json (non-blocking).
+  readPruningSettings().then(
+    (ps) => store.dispatch(settingsActions.setPruningSettings(ps)),
+    () => { /* defaults remain in store */ },
+  );
 
   const rawTabs = options.context.globalState.get<unknown[]>(
     'openTabPaths',

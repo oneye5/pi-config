@@ -48,14 +48,22 @@ Optional hints for model selection:
 ```json
 {
   "agent": "worker",
-  "task": "Complex refactor",
-  "taskScores": { "reasoning": 4, "precision": 5 }
+  "task": "Add validation to the signup form and update its tests",
+  "taskScores": { "precision": 3, "thoroughness": 3, "reasoning": 0 }
 }
 ```
 
 Scores: `reasoning`, `precision`, `creativity`, `thoroughness` (0–5 each).
 
-Model selection reads `<pi-config>/model-profiles.json` (the shared registry — also consumed by pie's model picker). If that file is absent the subagent inherits the calling agent's model and thinking level.
+Use the lowest score that fits:
+- Omit routine dimensions; omitted fields default to `2`.
+- `3` = normal professional work that genuinely depends on that dimension.
+- `4` = hard/high-risk or unusually complex work.
+- `5` = rare frontier difficulty on that dimension.
+- `reasoning` is special: omit/`2` requests low thinking; use `0` for direct/shallow work.
+- Score task difficulty, not importance or your uncertainty.
+
+Model selection reads `<pi-config>/model-profiles.yaml` when present, with `.json` fallback for backward compatibility (the shared registry — also consumed by pie's model picker). If no profile registry is available, no score-based model/thinking override is applied and normal agent/caller model resolution takes over.
 
 When running under pie, provider toggles are mirrored into the pi backend. Models that are only available from providers toggled off in pie are removed from the subagent selection pool.
 
@@ -77,6 +85,6 @@ that sub agents are unavailable. Any call returns:
 ## Limits
 
 - Max depth: 3 (nested subagent calls)
-- Max calls per process: 10
+- Max subagent sessions per reply: 20
 - Max parallel tasks: 8
 - Concurrency: 4

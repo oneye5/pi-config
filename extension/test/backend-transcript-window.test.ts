@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildDisplayTranscriptCache,
   buildPagedTranscriptWindow,
+  buildTailTranscriptWindow,
+  isDisplayTranscriptCacheStale,
   type DisplayTranscriptCache,
 } from '../src/backend/transcript-window';
 import type { ChatMessage } from '../src/shared/protocol';
@@ -62,4 +65,67 @@ test('buildPagedTranscriptWindow newer paging advances once max window budget is
   }).transcriptWindow;
 
   assert.deepEqual({ start: newerPage.loadedStart, end: newerPage.loadedEnd }, { start: 220, end: 460 });
+});
+
+test('buildDisplayTranscriptCache records transcript fingerprints and stale detection', () => {
+  const entries = [
+    {
+      id: 'entry-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'message',
+      message: { role: 'user', content: 'hello' },
+    },
+    {
+      id: 'entry-2',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'world' }] },
+    },
+  ] as any[];
+
+  const cache = buildDisplayTranscriptCache(entries as any);
+
+  assert.equal(cache.branchEntryCount, 2);
+  assert.equal(cache.branchLastEntryId, 'entry-2');
+  assert.equal(cache.hasUserMessages, true);
+  assert.equal(cache.transcript.length, 2);
+  assert.equal(isDisplayTranscriptCacheStale(cache, entries as any), false);
+  assert.equal(isDisplayTranscriptCacheStale(cache, [...entries, { id: 'entry-3' }] as any), true);
+});
+
+test('buildTailTranscriptWindow keeps pinned streaming messages visible outside the tail window', () => {
+  const cache = buildCache(20);
+
+  const tail = buildTailTranscriptWindow(cache, {
+    tailCount: 5,
+    maxLoadedCount: 5,
+    pinnedMessageId: 'msg-2',
+  }).transcriptWindow;
+
+  assert.deepEqual({ start: tail.loadedStart, end: tail.loadedEnd }, { start: 2, end: 7 });
+  assert.equal(tail.hasOlder, true);
+  assert.equal(tail.hasNewer, true);
+});
+
+test('buildPagedTranscriptWindow latest falls back to tail settings and clamps invalid ranges', () => {
+  const cache = buildCache(50);
+
+  const latest = buildPagedTranscriptWindow(cache, {
+    direction: 'latest',
+    tailCount: 4,
+    maxLoadedCount: 4,
+    pinnedMessageId: 'missing',
+  }).transcriptWindow;
+
+  assert.deepEqual({ start: latest.loadedStart, end: latest.loadedEnd }, { start: 46, end: 50 });
+
+  const clamped = buildPagedTranscriptWindow(cache, {
+    direction: 'older',
+    loadedStart: -10,
+    loadedEnd: 2,
+    pageSize: 10,
+    maxLoadedCount: 8,
+  }).transcriptWindow;
+
+  assert.deepEqual({ start: clamped.loadedStart, end: clamped.loadedEnd }, { start: 0, end: 2 });
 });

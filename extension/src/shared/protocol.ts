@@ -56,7 +56,7 @@ export interface ModelSettings {
 export type ModelInputKind = 'text' | 'image';
 
 /**
- * Per-model metadata sourced from the shared `<agentDir>/model-profiles.json`.
+ * Per-model metadata sourced from the shared `<agentDir>/model-profiles.{yaml,json}`.
  * Drives ordering and warning badges in the model picker.
  */
 export interface ModelSubagentInfo {
@@ -221,6 +221,10 @@ export interface ChatMessage {
   durationMs?: number;
   /** Token accounting reported by the provider for this assistant turn, when available. */
   usage?: AssistantUsage;
+  /** Custom message type from a pi extension (e.g. 'pruning-result'). Present on system messages mapped from custom_message entries. */
+  customType?: string;
+  /** Structured details from a custom_message entry, when provided by the source extension. */
+  customDetails?: unknown;
 }
 
 export type TranscriptPageDirection = 'older' | 'newer' | 'latest';
@@ -450,11 +454,43 @@ export interface ExtensionInfo {
   description: string;
 }
 
+/** Parsed pruning result emitted by the skill-pruner extension. */
+export interface PruningResult {
+  skillsKept: number;
+  skillsTotal: number;
+  toolsKept: number;
+  toolsTotal: number;
+  tokensSaved: number;
+  hasSkillPruning: boolean;
+  hasToolPruning: boolean;
+}
+
+/** Rich details from skill-pruner's pruning-result custom message. */
+export interface PruningDetails {
+  includedSkills: string[];
+  excludedSkills: string[];
+  includedTools: string[];
+  excludedTools: string[];
+  mode: 'auto' | 'shadow' | 'off';
+  skillTokensSaved: number;
+  toolTokensSaved: number;
+}
+
+export type PruningMode = 'auto' | 'shadow' | 'off';
+
+/** Subset of pruning config exposed in the settings UI. */
+export interface PruningSettings {
+  mode: PruningMode;
+  skillCeiling: number;
+  toolCeiling: number;
+}
+
 export interface ChatPrefs {
   autoExpandReasoning: boolean;
   autoExpandToolCalls: boolean;
   autoExpandSubagentCalls: boolean;
   suppressCompletionNotifications: boolean;
+  showPruningMessages: boolean;
   /** Per-extension enabled/disabled toggles. Keys are extension IDs. */
   extensionToggles: Record<string, boolean>;
   /** Per-provider enabled/disabled toggles. Keys are provider names. */
@@ -487,8 +523,15 @@ export const DEFAULT_CHAT_PREFS: ChatPrefs = {
   autoExpandToolCalls: false,
   autoExpandSubagentCalls: false,
   suppressCompletionNotifications: false,
+  showPruningMessages: true,
   extensionToggles: {},
   providerToggles: {},
+};
+
+export const DEFAULT_PRUNING_SETTINGS: PruningSettings = {
+  mode: 'auto',
+  skillCeiling: 5,
+  toolCeiling: 5,
 };
 
 export const EMPTY_TRANSCRIPT_WINDOW: TranscriptWindow = {
@@ -549,6 +592,10 @@ export interface ViewState {
   availableExtensions: ExtensionInfo[];
   /** File changes tracked from tool calls in the active session. */
   fileChanges: FileChangeEntry[];
+  /** Pruning result extracted from transcript (skill-pruner extension). */
+  pruningResult: PruningResult | null;
+  /** Current pruning configuration from settings.json. */
+  pruningSettings: PruningSettings;
 }
 
 // ─── Host ↔ webview envelopes ────────────────────────────────────────────────
@@ -589,10 +636,11 @@ export type WebviewToHostMessage =
   | { type: 'removeComposerInput'; sessionPath: string; inputId: string }
   | {
       type: 'send';
+      sessionPath: string;
       text: string;
     }
-  | { type: 'editMessage'; messageId: string; text: string }
-  | { type: 'interrupt' }
+  | { type: 'editMessage'; sessionPath: string; messageId: string; text: string }
+  | { type: 'interrupt'; sessionPath: string }
   | { type: 'newSession' }
   | { type: 'openSession'; sessionPath: string }
   | { type: 'closeSession'; sessionPath: string }
@@ -610,5 +658,6 @@ export type WebviewToHostMessage =
       defaultThinkingLevel: ThinkingLevel;
     }
   | { type: 'setPrefs'; prefs: Partial<ChatPrefs> }
+  | { type: 'setPruningSettings'; settings: Partial<PruningSettings> }
   | { type: 'openFileDiff'; sessionPath: string; filePath: string }
   | { type: 'revertFile'; sessionPath: string; filePath: string };

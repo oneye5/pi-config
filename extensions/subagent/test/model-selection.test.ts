@@ -20,20 +20,20 @@ import * as path from "node:path";
 const DETERMINISTIC_CONFIG: SelectionConfig = {
 	topK: 1,
 	profiles: [
-		{ id: "light-model", precision: 2, creativity: 2, thoroughness: 2, reasoning: 1, thinking: ["minimal", "low"], eligible: true },
-		{ id: "medium-model", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["low", "medium"], eligible: true },
-		{ id: "heavy-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, thinking: ["medium", "high", "xhigh"], eligible: true },
-		{ id: "disabled-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: false },
+		{ id: "light-model", precision: 2, creativity: 2, thoroughness: 2, reasoning: 1, thinking: ["minimal", "low"], cost: 7, eligible: true },
+		{ id: "medium-model", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["low", "medium"], cost: 12, eligible: true },
+		{ id: "heavy-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, thinking: ["medium", "high", "xhigh"], cost: 20, eligible: true },
+		{ id: "disabled-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 20, eligible: false },
 	],
 };
 
 const TEST_CONFIG: SelectionConfig = {
 	topK: 2,
 	profiles: [
-		{ id: "light-model", precision: 2, creativity: 2, thoroughness: 2, reasoning: 1, thinking: ["minimal", "low"], eligible: true },
-		{ id: "medium-model", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["low", "medium"], eligible: true },
-		{ id: "heavy-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, thinking: ["medium", "high", "xhigh"], eligible: true },
-		{ id: "disabled-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: false },
+		{ id: "light-model", precision: 2, creativity: 2, thoroughness: 2, reasoning: 1, thinking: ["minimal", "low"], cost: 7, eligible: true },
+		{ id: "medium-model", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["low", "medium"], cost: 12, eligible: true },
+		{ id: "heavy-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, thinking: ["medium", "high", "xhigh"], cost: 20, eligible: true },
+		{ id: "disabled-model", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 20, eligible: false },
 	],
 };
 
@@ -135,7 +135,7 @@ test("computeFitness: model with large deficit has negative fitness", () => {
 
 test("selectModel returns undefined when no eligible models", () => {
 	const allDisabled: SelectionConfig = { topK: 2, profiles: [
-		{ id: "a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, eligible: false },
+		{ id: "a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, cost: 12, eligible: false },
 	] };
 	const result = selectModel({ precision: 3 }, allDisabled);
 	assert.equal(result, undefined);
@@ -144,7 +144,7 @@ test("selectModel returns undefined when no eligible models", () => {
 test("selectModel returns undefined when no model supports thinking level", () => {
 	// low thinking level required, but only medium/high supported
 	const onlyHigh: SelectionConfig = { topK: 2, profiles: [
-		{ id: "a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["medium", "high"], eligible: true },
+		{ id: "a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, thinking: ["medium", "high"], cost: 12, eligible: true },
 	] };
 	// reasoning 1 -> low thinking
 	const result = selectModel({ precision: 3, reasoning: 1 }, onlyHigh);
@@ -227,7 +227,7 @@ test("loadSelectionConfig reads a valid JSON config file", async (t) => {
 	t.after(async () => { await fs.promises.rm(tmpDir, { recursive: true, force: true }); });
 
 	const config = { topK: 3, profiles: [
-		{ id: "model-a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, eligible: true },
+		{ id: "model-a", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, cost: 12, eligible: true },
 	] };
 	await fs.promises.writeFile(configPath, JSON.stringify(config));
 
@@ -235,6 +235,20 @@ test("loadSelectionConfig reads a valid JSON config file", async (t) => {
 	assert.equal(loaded.topK, 3);
 	assert.equal(loaded.profiles.length, 1);
 	assert.equal(loaded.profiles[0].id, "model-a");
+});
+
+test("loadSelectionConfig prefers YAML over JSON when both exist", async (t) => {
+	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-model-test-"));
+	const jsonPath = path.join(tmpDir, "profiles.json");
+	const yamlPath = path.join(tmpDir, "profiles.yaml");
+	t.after(async () => { await fs.promises.rm(tmpDir, { recursive: true, force: true }); });
+
+	await fs.promises.writeFile(yamlPath, `topK: 7\nprofiles:\n  - id: from-yaml\n    precision: 5\n    creativity: 5\n    thoroughness: 5\n    reasoning: 5\n    eligible: true\n    cost: 20\n`);
+	await fs.promises.writeFile(jsonPath, JSON.stringify({ topK: 3, profiles: [{ id: "from-json", precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true }] }));
+
+	const loaded = loadSelectionConfig(jsonPath);
+	assert.equal(loaded.topK, 7);
+	assert.equal(loaded.profiles[0].id, "from-yaml");
 });
 
 test("loadSelectionConfig throws for missing file", () => {
@@ -373,8 +387,8 @@ test("computeFitness: slight deficit scores higher than heavy overkill", () => {
 	// A model with a small deficit should still beat a heavily overkill model
 	// when both miss the exact requirements, since overkill is penalized more
 	const task: TaskScores = { precision: 4, creativity: 4, thoroughness: 4, reasoning: 4 };
-	const slightlyUnder = { id: "slightly-under", precision: 3, creativity: 4, thoroughness: 4, reasoning: 4, eligible: true };
-	const wayOver = { id: "way-over", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: true };
+	const slightlyUnder = { id: "slightly-under", precision: 3, creativity: 4, thoroughness: 4, reasoning: 4, cost: 15, eligible: true };
+	const wayOver = { id: "way-over", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 20, eligible: true };
 
 	const underFitness = computeFitness(task, slightlyUnder);
 	const overFitness = computeFitness(task, wayOver);
@@ -385,4 +399,54 @@ test("computeFitness: slight deficit scores higher than heavy overkill", () => {
 	// Under: met=3*4+4*4+4*4+4*4=60, deficit=1*1=1, deficit_penalty=2*1=2, overkill=0, cost=0.5*15=7.5 => 60-2-7.5=50.5
 	// Over: met=4*4*4=64, overkill=1*4=4, overkill_penalty=1.5*4=6, cost=0.5*20=10 => 64-6-10=48
 	assert.ok(underFitness > overFitness, "slight deficit should beat heavy overkill");
+});
+
+// --- Explicit cost field ---
+
+test("computeFitness: uses explicit cost field when present instead of aggregate", () => {
+	const task: TaskScores = { precision: 5, creativity: 5, thoroughness: 5, reasoning: 5 };
+
+	const implicitCost = { id: "implicit", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: true };
+	const explicitHighCost = { id: "explicit-high", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 30, eligible: true };
+	const explicitZeroCost = { id: "explicit-zero", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 0, eligible: true };
+
+	const implicitFitness = computeFitness(task, implicitCost);
+	const highCostFitness = computeFitness(task, explicitHighCost);
+	const zeroCostFitness = computeFitness(task, explicitZeroCost);
+
+	// Same capabilities, but explicit cost makes the difference
+	// implicit: fitness = 100 - 0.5*20 = 90
+	// high cost: fitness = 100 - 0.5*30 = 85
+	// zero cost: fitness = 100 - 0.5*0 = 100
+	assert.ok(zeroCostFitness > implicitFitness, "zero cost should beat implicit aggregate cost");
+	assert.ok(implicitFitness > highCostFitness, "implicit cost should beat explicit high cost");
+});
+
+test("computeFitness: free model (cost=0) strongly preferred over expensive peer at same capability", () => {
+	const task: TaskScores = { precision: 3, creativity: 3, thoroughness: 3, reasoning: 3 };
+
+	const freeModel = { id: "free", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, cost: 0, eligible: true };
+	const expensiveModel = { id: "expensive", precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, cost: 30, eligible: true };
+
+	const freeFitness = computeFitness(task, freeModel);
+	const expFitness = computeFitness(task, expensiveModel);
+
+	// Same capability scores, but cost difference = 30
+	// Free: 36 - 0.5*0 = 36
+	// Expensive: 36 - 0.5*30 = 21
+	assert.ok(freeFitness > expFitness, "free model should strongly outrank expensive peer");
+});
+
+test("selectModel: explicit cost makes expensive model lose to cheaper equivalent", () => {
+	const config: SelectionConfig = {
+		topK: 1,
+		profiles: [
+			{ id: "cheap-equivalent", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 15, thinking: ["medium", "high", "xhigh"], eligible: true },
+			{ id: "expensive-equivalent", precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, cost: 30, thinking: ["medium", "high", "xhigh"], eligible: true },
+		],
+	};
+
+	const result = selectModel({ precision: 5, reasoning: 5 }, config);
+	assert.ok(result);
+	assert.equal(result!.modelId, "cheap-equivalent", "cheaper model should win at same capability");
 });

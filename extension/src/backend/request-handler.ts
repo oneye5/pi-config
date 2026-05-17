@@ -79,7 +79,7 @@ export async function handleBackendRequest(
         params.selectionToken,
       );
       deps.emit('session.opened', createPayload);
-      deps.emitBusyChanged(context, context.session.isStreaming);
+      deps.emitBusyChanged(context, context.session.isStreaming || !!context.activeRequest);
       void deps.emitSessionListChanged();
       return createPayload;
     }
@@ -93,7 +93,7 @@ export async function handleBackendRequest(
         params.selectionToken,
       );
       deps.emit('session.opened', openPayload);
-      deps.emitBusyChanged(context, context.session.isStreaming);
+      deps.emitBusyChanged(context, context.session.isStreaming || !!context.activeRequest);
       void deps.emitSessionListChanged();
       return openPayload;
     }

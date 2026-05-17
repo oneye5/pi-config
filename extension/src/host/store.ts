@@ -9,6 +9,8 @@ import {
   type ExtensionInfo,
   type FileChangeEntry,
   type ModelInfo,
+  type PruningResult,
+  type PruningSettings,
   type SessionSummary,
   type SystemPromptEntry,
   type TranscriptWindow,
@@ -142,6 +144,64 @@ const selectActiveRunSummary = (state: RootState): ActiveRunSummary | null => {
 };
 
 /**
+ * Parse the most recent pruning result from transcript system messages.
+ * Matches the variable format emitted by skill-pruner:
+ *   "Pruned: Kept X/Y skills"
+ *   "Pruned: Kept A/B tools"
+ *   "Pruned: Kept X/Y skills, Kept A/B tools"
+ *   Any of the above with " · Saved ~Z tokens" appended.
+ */
+export function parsePruningResult(transcript: ChatMessage[]): PruningResult | null {
+  const skillRe = /Kept\s+(\d+)\/(\d+)\s+skills/i;
+  const toolRe = /Kept\s+(\d+)\/(\d+)\s+tools/i;
+  const tokenRe = /Saved\s*~(\d+)\s+tokens/i;
+
+  // Scan from most recent to oldest for efficiency
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const message = transcript[i];
+    if (message.role !== 'system') {
+      continue;
+    }
+    const text = message.markdown;
+    if (!text.startsWith('Pruned:')) {
+      continue;
+    }
+
+    const skillMatch = text.match(skillRe);
+    const toolMatch = text.match(toolRe);
+
+    // Must match at least one of skills or tools
+    if (!skillMatch && !toolMatch) {
+      continue;
+    }
+
+    const skillsKept = skillMatch ? parseInt(skillMatch[1], 10) : 0;
+    const skillsTotal = skillMatch ? parseInt(skillMatch[2], 10) : 0;
+    const toolsKept = toolMatch ? parseInt(toolMatch[1], 10) : 0;
+    const toolsTotal = toolMatch ? parseInt(toolMatch[2], 10) : 0;
+    const tokenMatch = text.match(tokenRe);
+    const tokensSaved = tokenMatch ? parseInt(tokenMatch[1], 10) : 0;
+
+    return {
+      skillsKept,
+      skillsTotal,
+      toolsKept,
+      toolsTotal,
+      tokensSaved,
+      hasSkillPruning: skillsKept < skillsTotal,
+      hasToolPruning: toolsKept < toolsTotal,
+    };
+  }
+  return null;
+}
+
+const selectActivePruningResult = (state: RootState): PruningResult | null => {
+  if (!state.ui.prefs.showPruningMessages) return null;
+  const transcript = selectActiveTranscript(state);
+  return parsePruningResult(transcript);
+};
+
+/**
  * Memoised view-state projection. Recomputes only when an input slice changes
  * so equality-aware downstream consumers (the snapshot dispatcher) can
  * short-circuit identical renders.
@@ -169,6 +229,8 @@ export const selectViewState = createSelector(
     (s: RootState) => s.ui.prefs,
     selectActiveFileChanges,
     selectAvailableExtensions,
+    selectActivePruningResult,
+    (s: RootState) => s.settings.pruningSettings,
   ],
   (
     sessions,
@@ -192,6 +254,8 @@ export const selectViewState = createSelector(
     prefs,
     fileChanges,
     availableExtensions,
+    pruningResult,
+    pruningSettings,
   ): ViewState => {
     const busy = !!activeSessionPath && runningSessionPaths.includes(activeSessionPath);
     return {
@@ -216,6 +280,8 @@ export const selectViewState = createSelector(
       prefs,
       fileChanges,
       availableExtensions,
+      pruningResult,
+      pruningSettings,
     };
   },
 );

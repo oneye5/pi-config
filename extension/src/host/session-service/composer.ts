@@ -14,15 +14,7 @@ import type {
   ComposerInputDraft,
   UserContentPart,
 } from '../../shared/protocol';
-
-const MAX_IMAGE_INPUT_BYTES = 10 * 1024 * 1024;
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/gif',
-]);
+import { ALLOWED_IMAGE_MIME_TYPES, MAX_IMAGE_INPUT_BYTES } from '../../shared/image-constraints';
 
 export function normalizeAttachUris(uris: vscode.Uri[]): vscode.Uri[] {
   return uris.filter((uri) => uri.scheme === 'file');

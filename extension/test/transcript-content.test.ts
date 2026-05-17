@@ -1,0 +1,193 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  addAssistantUsage,
+  appendAssistantParts,
+  applyToolResultToParts,
+  assistantPartsFromContent,
+  assistantStatus,
+  isoDate,
+  normalizeThinkingLevel,
+  systemMessage,
+  textFromParts,
+  thinkingFromParts,
+  usageFromMessage,
+  userPartsFromContent,
+} from '../src/backend/transcript/content';
+import type { ChatMessage, ChatMessagePart } from '../src/shared/protocol';
+import type { ContentPart, MessageLike } from '../src/backend/transcript/types';
+
+function assistantTarget(parts?: ChatMessagePart[]): ChatMessage {
+  return {
+    id: 'assistant-1',
+    role: 'assistant',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    markdown: '',
+    status: 'streaming',
+    parts,
+  };
+}
+
+test('isoDate prefers message timestamps and part extractors ignore missing fields', () => {
+  const fromMessageTimestamp = isoDate('2026-01-01T00:00:00.000Z', Date.UTC(2026, 0, 2));
+  const fromEntryTimestamp = isoDate('2026-01-03T00:00:00.000Z');
+  const parts: ContentPart[] = [
+    { type: 'text', text: 'hello' },
+    { type: 'thinking', thinking: 'trace' },
+    { type: 'text', text: ' world' },
+    { type: 'thinking', thinking: ' more' },
+    { type: 'image', data: 'ignored' },
+  ];
+
+  assert.equal(fromMessageTimestamp, '2026-01-02T00:00:00.000Z');
+  assert.equal(fromEntryTimestamp, '2026-01-03T00:00:00.000Z');
+  assert.equal(textFromParts(parts), 'hello world');
+  assert.equal(textFromParts(undefined), '');
+  assert.equal(thinkingFromParts(parts), 'trace more');
+  assert.equal(thinkingFromParts(undefined), undefined);
+});
+
+test('userPartsFromContent lowers text and valid image parts only', () => {
+  const parts = userPartsFromContent([
+    { type: 'text', text: 'Inspect this screenshot' },
+    { type: 'image', data: 'ZmFrZQ==', mimeType: 'image/png', name: 'shot.png', width: 100, height: 50 },
+    { type: 'image', data: '', mimeType: 'image/png' },
+    { type: 'image', data: 'abc', mimeType: '' },
+  ]);
+
+  assert.deepEqual(parts, [
+    { kind: 'text', text: 'Inspect this screenshot' },
+    { kind: 'image', dataBase64: 'ZmFrZQ==', mimeType: 'image/png', name: 'shot.png', width: 100, height: 50 },
+  ]);
+  assert.equal(userPartsFromContent('plain text'), undefined);
+});
+
+test('normalizeThinkingLevel accepts known values and rejects unknown ones', () => {
+  assert.equal(normalizeThinkingLevel('high'), 'high');
+  assert.equal(normalizeThinkingLevel('xhigh'), 'xhigh');
+  assert.equal(normalizeThinkingLevel('max'), undefined);
+  assert.equal(normalizeThinkingLevel(undefined), undefined);
+});
+
+test('assistantPartsFromContent builds ordered assistant parts and returns undefined when empty', () => {
+  const parts = assistantPartsFromContent([
+    { type: 'text', text: 'alpha' },
+    { type: 'text', text: ' beta' },
+    { type: 'thinking', thinking: 'reason' },
+    { type: 'thinking', thinking: 'ing' },
+    { type: 'toolCall', id: 'tool-1', name: 'bash', arguments: { command: 'ls' } },
+    { type: 'toolCall', id: 'tool-1', name: 'bash', arguments: { command: 'pwd' } },
+  ], 'completed');
+
+  assert.deepEqual(parts, [
+    { kind: 'text', text: 'alpha beta' },
+    { kind: 'reasoning', text: 'reasoning' },
+    { kind: 'toolCall', toolCall: { id: 'tool-1', name: 'bash', input: { command: 'pwd' }, status: 'completed' } },
+  ]);
+  assert.equal(assistantPartsFromContent(undefined), undefined);
+  assert.equal(assistantPartsFromContent([{ type: 'image', data: 'abc' }]), undefined);
+});
+
+test('appendAssistantParts preserves boundaries when requested and tool results update in place', () => {
+  const target = assistantTarget([{ kind: 'text', text: 'existing' }]);
+
+  appendAssistantParts(target, [
+    { kind: 'text', text: 'next' },
+    { kind: 'reasoning', text: 'think' },
+    { kind: 'toolCall', toolCall: { id: 'tool-1', name: 'read', input: { path: 'README.md' }, status: 'running' } },
+    { kind: 'text', text: 'after tool' },
+  ], true);
+
+  assert.deepEqual(target.parts, [
+    { kind: 'text', text: 'existing\n\nnext' },
+    { kind: 'reasoning', text: 'think' },
+    { kind: 'toolCall', toolCall: { id: 'tool-1', name: 'read', input: { path: 'README.md' }, status: 'running' } },
+    { kind: 'text', text: 'after tool' },
+  ]);
+
+  applyToolResultToParts(target.parts, 'tool-1', { ok: true }, 'completed');
+  assert.deepEqual((target.parts?.[2] as Extract<ChatMessagePart, { kind: 'toolCall' }>).toolCall.result, { ok: true });
+  assert.equal((target.parts?.[2] as Extract<ChatMessagePart, { kind: 'toolCall' }>).toolCall.status, 'completed');
+
+  applyToolResultToParts(target.parts, undefined, 'ignored', 'failed');
+  applyToolResultToParts(undefined, 'tool-1', 'ignored', 'failed');
+  applyToolResultToParts(target.parts, 'missing', 'ignored', 'failed');
+});
+
+test('assistantStatus, usage helpers, and systemMessage normalize edge cases', () => {
+  const aborted: MessageLike = { role: 'assistant', stopReason: 'aborted' };
+  const errored: MessageLike = { role: 'assistant', stopReason: 'error' };
+  const withErrorMessage: MessageLike = { role: 'assistant', errorMessage: 'bad' };
+  const completed: MessageLike = { role: 'assistant' };
+
+  assert.equal(assistantStatus(aborted), 'interrupted');
+  assert.equal(assistantStatus(errored), 'error');
+  assert.equal(assistantStatus(withErrorMessage), 'error');
+  assert.equal(assistantStatus(completed), 'completed');
+
+  assert.equal(usageFromMessage({ role: 'assistant' }), undefined);
+  assert.equal(usageFromMessage({ role: 'assistant', usage: { input: -1, output: Number.NaN, totalTokens: 0 } }), undefined);
+  assert.deepEqual(usageFromMessage({
+    role: 'assistant',
+    usage: { input: 2.9, output: 3.2, cacheRead: 1.8, cacheWrite: 0.4, totalTokens: 99.7 },
+  }), {
+    inputTokens: 2,
+    outputTokens: 3,
+    cacheReadTokens: 1,
+    cacheWriteTokens: 0,
+    totalTokens: 99,
+  });
+  assert.deepEqual(usageFromMessage({
+    role: 'assistant',
+    usage: { input: 2, output: 3, cacheRead: 1, cacheWrite: 4 },
+  }), {
+    inputTokens: 2,
+    outputTokens: 3,
+    cacheReadTokens: 1,
+    cacheWriteTokens: 4,
+    totalTokens: 10,
+  });
+
+  assert.deepEqual(addAssistantUsage(undefined, undefined), undefined);
+  assert.deepEqual(addAssistantUsage(undefined, {
+    inputTokens: 1,
+    outputTokens: 2,
+    cacheReadTokens: 3,
+    cacheWriteTokens: 4,
+    totalTokens: 10,
+  }), {
+    inputTokens: 1,
+    outputTokens: 2,
+    cacheReadTokens: 3,
+    cacheWriteTokens: 4,
+    totalTokens: 10,
+  });
+  assert.deepEqual(addAssistantUsage({
+    inputTokens: 1,
+    outputTokens: 2,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 3,
+  }, {
+    inputTokens: 4,
+    outputTokens: 5,
+    cacheReadTokens: 1,
+    cacheWriteTokens: 2,
+    totalTokens: 12,
+  }), {
+    inputTokens: 5,
+    outputTokens: 7,
+    cacheReadTokens: 1,
+    cacheWriteTokens: 2,
+    totalTokens: 15,
+  });
+
+  assert.deepEqual(systemMessage('system-1', '2026-01-01T00:00:00.000Z', 'hello'), {
+    id: 'system-1',
+    role: 'system',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    markdown: 'hello',
+    status: 'completed',
+  });
+});

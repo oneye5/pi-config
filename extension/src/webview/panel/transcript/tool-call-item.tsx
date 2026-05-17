@@ -2,8 +2,8 @@
 /** @jsxImportSource preact */
 
 import type { ChatPrefs, ToolCall } from '../../../shared/protocol';
+import { summarizeSubagentToolCallInput } from '../../../shared/tool-call-analysis';
 import { shouldOpenSubagentContextMenu } from './interactions';
-import { summarizeToolCall } from '../tool-call-summary';
 import { getToolCallContextType } from '../chat-prefs';
 
 import { MessageItem } from './message-item';
@@ -41,10 +41,6 @@ interface SubagentBlockProps {
   renderToolCall: RenderToolCall;
 }
 
-function shortenModelId(id: string): string {
-  return id.replace(/:cloud$/, '').replace(/:local$/, '');
-}
-
 function isRunning(result: SubagentSingleResult): boolean {
   return result.exitCode === -1 || (result.runningTools?.length ?? 0) > 0;
 }
@@ -67,23 +63,6 @@ function subagentErrorDetail(result: SubagentSingleResult): string | undefined {
   if (result.errorMessage) parts.push(result.errorMessage);
   if (result.stderr) parts.push(result.stderr);
   return parts.join(': ');
-}
-
-/** Aggregate error details across all failed results. */
-function aggregateErrorDetail(results: SubagentSingleResult[]): string | undefined {
-  const details = results.filter(isFailed).map(subagentErrorDetail).filter(Boolean);
-  return details.length > 0 ? details.join('\n') : undefined;
-}
-
-/** Aggregate status across all results in a subagent call. */
-function aggregateStatus(results: SubagentSingleResult[], toolCallStatus: ToolCall['status']): 'running' | 'failed' | 'completed' {
-  if (toolCallStatus === 'running') return 'running';
-  if (toolCallStatus === 'failed') return 'failed';
-  // Any child still running?
-  if (results.some((r) => isRunning(r))) return 'running';
-  // Any child failed?
-  if (results.some((r) => isFailed(r))) return 'failed';
-  return 'completed';
 }
 
 /** Compact score bar: always shows the full effective requirement vector. */
@@ -109,70 +88,13 @@ function ScoreBar({ scores }: { scores: Record<string, number> | undefined }) {
   );
 }
 
-/** Model badge shown in the header row. */
-function ModelTag({ result }: { result: SubagentSingleResult }) {
-  const model = result.selectedModel ?? result.model;
-  if (!model) return null;
-  const short = shortenModelId(model);
-  return <span class="subagent-model-tag" title={model}>{short}</span>;
-}
-
 /** High-priority metadata that should remain visible before summary text. */
 function PrimaryMeta({ result }: { result: SubagentSingleResult }) {
-  const scores = normalizeTaskScoresForDisplay(result.taskScores);
-  const model = result.selectedModel ?? result.model;
-  if (!scores && !model) return null;
+  if (!normalizeTaskScoresForDisplay(result.taskScores)) return null;
 
   return (
     <span class="subagent-primary-meta">
-      {scores && <ScoreBar scores={result.taskScores} />}
-      {model && <ModelTag result={result} />}
-    </span>
-  );
-}
-
-/** Thinking pill, if present. */
-function ThinkingTag({ result }: { result: SubagentSingleResult }) {
-  if (!result.thinkingLevel) return null;
-  return <span class="subagent-thinking-tag">{result.thinkingLevel}</span>;
-}
-
-/** Lower-priority metadata that can yield space before scores/model. */
-function SecondaryMeta({ result }: { result: SubagentSingleResult }) {
-  if (!result.thinkingLevel) return null;
-  return (
-    <span class="subagent-secondary-meta">
-      <ThinkingTag result={result} />
-    </span>
-  );
-}
-
-/** Build a tooltip showing model-selection pool details. */
-function modelPoolTooltip(result: SubagentSingleResult): string | undefined {
-  if (!result.selectionPool || !result.selectionFitScores) return undefined;
-  let tooltip = 'Model selection:\n';
-  tooltip += result.selectionPool
-    .map((m, i) => {
-      const marker = m === result.selectedModel ? '→ ' : '  ';
-      const fit = result.selectionFitScores![i];
-      return `${marker}${shortenModelId(m)}${fit != null ? ` (${fit})` : ''}`;
-    })
-    .join('\n');
-  if (result.thinkingLevel) tooltip += `\nThinking: ${result.thinkingLevel}`;
-  return tooltip;
-}
-
-/** Compact badge for inline use in multi-agent labels when expanded. */
-function InlineBadge({ result }: { result: SubagentSingleResult }) {
-  const scores = normalizeTaskScoresForDisplay(result.taskScores);
-  const model = result.selectedModel ?? result.model;
-  if (!scores && !model) return null;
-
-  return (
-    <span class="subagent-inline-badge" title={modelPoolTooltip(result)}>
-      {scores && <ScoreBar scores={result.taskScores} />}
-      {model && <span class="subagent-model-tag">{shortenModelId(model)}</span>}
-      {result.thinkingLevel && <span class="subagent-thinking-tag">{result.thinkingLevel}</span>}
+      <ScoreBar scores={result.taskScores} />
     </span>
   );
 }
@@ -202,49 +124,60 @@ function StatusIndicator({ status, errorDetail }: { status: 'running' | 'failed'
   );
 }
 
-function SubagentBlock({
+function singleResultStatus(
+  result: SubagentSingleResult,
+  toolCallStatus: ToolCall['status'],
+  multipleResults: boolean,
+): 'running' | 'failed' | 'completed' {
+  if (isFailed(result)) return 'failed';
+  if (isRunning(result)) return toolCallStatus === 'failed' ? 'failed' : 'running';
+  if (!multipleResults && toolCallStatus === 'running') return 'running';
+  if (!multipleResults && toolCallStatus === 'failed') return 'failed';
+  return 'completed';
+}
+
+function summarizeSingleResult(result: SubagentSingleResult): string | null {
+  return summarizeSubagentToolCallInput({ task: result.task });
+}
+
+interface SubagentSingleBlockProps {
+  singleResult: SubagentSingleResult;
+  toolCall: ToolCall;
+  index: number;
+  prefs: ChatPrefs;
+  workingDirectory: string | null;
+  onOpenFile: (path: string) => void;
+  onContextMenu: (e: MouseEvent) => void;
+  onNestedContextMenu: TranscriptContextMenuHandler;
+  renderToolCall: RenderToolCall;
+  multipleResults: boolean;
+}
+
+function SubagentSingleBlock({
+  singleResult,
   toolCall,
-  subagentResult,
+  index,
   prefs,
   workingDirectory,
   onOpenFile,
   onContextMenu,
   onNestedContextMenu,
   renderToolCall,
-}: SubagentBlockProps) {
-  const [open, setOpen] = useDisclosureOpen(`subagent:${toolCall.id}`, prefs.autoExpandSubagentCalls);
-
-  const result = subagentResult ?? getRenderableSubagentResultFromToolCall(toolCall);
-
-  if (!result) {
-    return (
-      <ToolCallCard
-        toolCall={toolCall}
-        autoExpand={prefs.autoExpandSubagentCalls}
-        className="tool-call-subagent"
-        workingDirectory={workingDirectory}
-        onOpenFile={onOpenFile}
-        onContextMenu={onContextMenu}
-      />
-    );
-  }
-
-  const agentNames = [...new Set(result.results.map((r) => r.agent))];
-  const multipleResults = result.results.length > 1;
-  const singleResult = result.results.length === 1 ? result.results[0] : undefined;
-  const summary = summarizeToolCall(toolCall);
-  const status = aggregateStatus(result.results, toolCall.status);
-  const errorDetail = status === 'failed' ? aggregateErrorDetail(result.results) : undefined;
+  multipleResults,
+}: SubagentSingleBlockProps) {
+  const disclosureKey = multipleResults
+    ? `subagent:${toolCall.id}-${index}`
+    : `subagent:${toolCall.id}`;
+  const [open, setOpen] = useDisclosureOpen(disclosureKey, prefs.autoExpandSubagentCalls);
+  const summary = summarizeSingleResult(singleResult);
+  const status = singleResultStatus(singleResult, toolCall.status, multipleResults);
+  const errorDetail = status === 'failed' ? subagentErrorDetail(singleResult) : undefined;
+  const messages = subagentSingleResultToChatMessages(singleResult, `${toolCall.id}-${index}`);
   const nestedDisclosureDefaultsKey = `${prefs.autoExpandReasoning ? 'r1' : 'r0'}-${prefs.autoExpandToolCalls ? 't1' : 't0'}`;
-
-  // Name display: for single agent show the name; for multi show "N agents"
-  const nameDisplay = multipleResults
-    ? (agentNames.length === 1 ? `${result.results.length}× ${agentNames[0]}` : `${agentNames.length} agents`)
-    : agentNames[0] ?? 'agent';
 
   return (
     <div
-      class={`tool-call tool-call-subagent ${toolCall.status}`}
+      class={`tool-call tool-call-subagent ${status}`}
       role="button"
       aria-expanded={open}
       tabIndex={0}
@@ -256,19 +189,9 @@ function SubagentBlock({
         <svg class={`thinking-block-chevron${open ? ' open' : ''}`} width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
           <polyline points="3,2 7,5 3,8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <span class="subagent-agent-name">{nameDisplay}</span>
-        {singleResult ? (
-          <>
-            <PrimaryMeta result={singleResult} />
-            {!open && summary && <span class="subagent-header-summary">{summary}</span>}
-            <SecondaryMeta result={singleResult} />
-          </>
-        ) : (
-          <>
-            <MultiAgentSummary results={result.results} />
-            {!open && summary && <span class="subagent-header-summary">{summary}</span>}
-          </>
-        )}
+        <span class="subagent-agent-name">{singleResult.agent}</span>
+        <PrimaryMeta result={singleResult} />
+        {!open && summary && <span class="subagent-header-summary">{summary}</span>}
         <StatusIndicator status={status} errorDetail={errorDetail} />
       </div>
       {open && (
@@ -286,58 +209,99 @@ function SubagentBlock({
           }}
           onKeyDown={(e) => e.stopPropagation()}
         >
-          {result.results.map((singleResult, index) => {
-            const messages = subagentSingleResultToChatMessages(singleResult, `${toolCall.id}-${index}`);
-            return (
-              <div key={index} class={`subagent-result${multipleResults ? ' labeled' : ''}`}>
-                {multipleResults && (
-                  <div class="subagent-result-label">
-                    {singleResult.agent}
-                    <InlineBadge result={singleResult} />
-                  </div>
-                )}
-                {singleResult.runningTools && singleResult.runningTools.length > 0 && (
-                  <div class="subagent-running-tools">
-                    {singleResult.runningTools.map((runningTool, runningIndex) => (
-                      <span key={runningIndex} class="subagent-running-tool">{runningTool}…</span>
-                    ))}
-                  </div>
-                )}
-                {messages.map((message) => (
-                  <MessageItem
-                    key={`${message.id}-${nestedDisclosureDefaultsKey}`}
-                    message={message}
-                    overlayParts={undefined}
-                    isStreaming={false}
-                    prefs={prefs}
-                    readonly
-                    workingDirectory={workingDirectory}
-                    editingId={null}
-                    onEditRequest={() => {}}
-                    onEditConfirm={() => {}}
-                    onEditCancel={() => {}}
-                    onOpenFile={onOpenFile}
-                    onContextMenu={onNestedContextMenu}
-                    renderToolCall={renderToolCall}
-                  />
-                ))}
-              </div>
-            );
-          })}
+          {singleResult.runningTools && singleResult.runningTools.length > 0 && (
+            <div class="subagent-running-tools">
+              {singleResult.runningTools.map((runningTool, runningIndex) => (
+                <span key={runningIndex} class="subagent-running-tool">{runningTool}…</span>
+              ))}
+            </div>
+          )}
+          {messages.map((message) => (
+            <MessageItem
+              key={`${message.id}-${nestedDisclosureDefaultsKey}`}
+              message={message}
+              overlayParts={undefined}
+              isStreaming={false}
+              prefs={prefs}
+              readonly
+              workingDirectory={workingDirectory}
+              editingId={null}
+              onEditRequest={() => {}}
+              onEditConfirm={() => {}}
+              onEditCancel={() => {}}
+              onOpenFile={onOpenFile}
+              onContextMenu={onNestedContextMenu}
+              renderToolCall={renderToolCall}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-/** For multi-agent results shown collapsed: list unique model names. */
-function MultiAgentSummary({ results }: { results: SubagentSingleResult[] }) {
-  const models = [...new Set(results.map((r) => r.selectedModel ?? r.model).filter(Boolean))];
-  if (models.length === 0) return null;
+function SubagentBlock({
+  toolCall,
+  subagentResult,
+  prefs,
+  workingDirectory,
+  onOpenFile,
+  onContextMenu,
+  onNestedContextMenu,
+  renderToolCall,
+}: SubagentBlockProps) {
+  const result = subagentResult ?? getRenderableSubagentResultFromToolCall(toolCall);
+
+  if (!result) {
+    return (
+      <ToolCallCard
+        toolCall={toolCall}
+        autoExpand={prefs.autoExpandSubagentCalls}
+        className="tool-call-subagent"
+        workingDirectory={workingDirectory}
+        onOpenFile={onOpenFile}
+        onContextMenu={onContextMenu}
+      />
+    );
+  }
+
+  const multipleResults = result.results.length > 1;
+
+  if (multipleResults) {
+    return (
+      <div class="subagent-parallel-group">
+        {result.results.map((singleResult, index) => (
+          <SubagentSingleBlock
+            key={index}
+            singleResult={singleResult}
+            toolCall={toolCall}
+            index={index}
+            prefs={prefs}
+            workingDirectory={workingDirectory}
+            onOpenFile={onOpenFile}
+            onContextMenu={onContextMenu}
+            onNestedContextMenu={onNestedContextMenu}
+            renderToolCall={renderToolCall}
+            multipleResults
+          />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <span class="subagent-multi-models">
-      {models.map((m) => <span key={m} class="subagent-model-tag">{shortenModelId(m!)}</span>)}
-    </span>
+    <SubagentSingleBlock
+      singleResult={result.results[0]}
+      toolCall={toolCall}
+      index={0}
+      prefs={prefs}
+      workingDirectory={workingDirectory}
+      onOpenFile={onOpenFile}
+      onContextMenu={onContextMenu}
+      onNestedContextMenu={onNestedContextMenu}
+      renderToolCall={renderToolCall}
+      multipleResults={false}
+    />
   );
 }
 
@@ -380,6 +344,37 @@ export function ToolCallItem({
       workingDirectory={workingDirectory}
       onOpenFile={onOpenFile}
       onContextMenu={handleContextMenu}
+    />
+  );
+}
+
+/** Subagent renderer exposed for registry registration. */
+export function SubagentToolRenderer({
+  toolCall,
+  prefs,
+  workingDirectory,
+  onOpenFile,
+  onContextMenu,
+  renderToolCall,
+}: import('./registry').ToolRendererProps) {
+  const subagentResult = getRenderableSubagentResultFromToolCall(toolCall);
+  const contextType = getToolCallContextType('subagent');
+  const handleContextMenu = (e: MouseEvent) => onContextMenu(
+    contextType,
+    JSON.stringify(toolCall, null, 2),
+    e,
+  );
+
+  return (
+    <SubagentBlock
+      toolCall={toolCall}
+      subagentResult={subagentResult}
+      prefs={prefs}
+      workingDirectory={workingDirectory}
+      onOpenFile={onOpenFile}
+      onContextMenu={handleContextMenu}
+      onNestedContextMenu={onContextMenu}
+      renderToolCall={renderToolCall}
     />
   );
 }

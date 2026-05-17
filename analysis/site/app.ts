@@ -1,5 +1,11 @@
 import embed from 'vega-embed';
 
+import {
+  LEADERBOARD_MINIMUM_SCORED_RUNS as LEADERBOARD_MIN_SCORED,
+  LEADERBOARD_TARGET_SAMPLE,
+  LEADERBOARD_TOKEN_EFFICIENCY_MAX,
+  LEADERBOARD_WEIGHTS,
+} from '../scripts/leaderboard-scoring.ts';
 import { meanDifferenceInterval, meanInterval, wilsonInterval } from './chart-stats.ts';
 
 import type {
@@ -1828,10 +1834,6 @@ function taskSizeTimeRows(runs: PreparedRunRow[]): OutcomeTimeBucketRow[] {
 
 // ─── Leaderboard data preparation ────────────────────────────────────────────
 
-const LEADERBOARD_WEIGHTS = { satisfaction: 0.35, resolutionRate: 0.30, firstAttemptSuccess: 0.15, toolReliability: 0.10, verificationAdoption: 0.05, tokenEfficiency: 0.05 } as const;
-const LEADERBOARD_MIN_SCORED = 3;
-const LEADERBOARD_TARGET_SAMPLE = 10;
-const LEADERBOARD_TOKEN_EFFICIENCY_MAX = 50;
 const DIMENSION_COLORS = ['#8de3ff', '#c0ff72', '#ffd479', '#ff8578', '#c084fc', '#f7b267'];
 const DIMENSION_NAMES = ['Satisfaction', 'Resolution', 'First attempt', 'Tool reliability', 'Verification', 'Token efficiency'];
 

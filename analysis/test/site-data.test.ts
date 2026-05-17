@@ -74,3 +74,157 @@ test('site data generation tolerates unknown model ids and ignores unknown verif
   assert.ok(bundle.modelQuality.rows.some((row) => row.modelId === '(unknown)'));
   assert.ok(!JSON.stringify(bundle).includes('unexpected'));
 });
+
+test('site data treatment comparison normalizes null hashes and sorts by run count then experiment', async () => {
+  const prepared = deepClone(prepareSourceAnalytics(await loadFixture()));
+  const completedRuns = prepared.runs.filter((run) => run.status !== 'open').slice(0, 4);
+
+  Object.assign(completedRuns[0]!, {
+    promptFamily: null,
+    promptHashPrefix: null,
+    toolSetHashPrefix: null,
+    skillSetHashPrefix: null,
+    experimentAssignment: 'exp-z',
+    mixedTreatmentConfig: false,
+  });
+  Object.assign(completedRuns[1]!, {
+    promptFamily: null,
+    promptHashPrefix: null,
+    toolSetHashPrefix: null,
+    skillSetHashPrefix: null,
+    experimentAssignment: 'exp-z',
+    mixedTreatmentConfig: false,
+  });
+  Object.assign(completedRuns[2]!, {
+    promptFamily: 'family-a',
+    promptHashPrefix: null,
+    toolSetHashPrefix: null,
+    skillSetHashPrefix: null,
+    experimentAssignment: 'exp-b',
+    mixedTreatmentConfig: false,
+  });
+  Object.assign(completedRuns[3]!, {
+    promptFamily: 'family-a',
+    promptHashPrefix: null,
+    toolSetHashPrefix: null,
+    skillSetHashPrefix: null,
+    experimentAssignment: 'exp-a',
+    mixedTreatmentConfig: false,
+  });
+
+  prepared.runs = completedRuns;
+  prepared.toolUsage = [];
+  prepared.toolFailures = [];
+  prepared.verificationUsage = [];
+  prepared.backendErrors = [];
+  prepared.fileExtensions = [];
+
+  const bundle = buildSiteDataBundle(prepared);
+  const rows = bundle.treatmentComparison.rows;
+
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0]?.runCount, 2);
+  assert.equal(rows[0]?.promptFamily, '(none)');
+  assert.equal(rows[0]?.toolSetHashPrefix, null);
+  assert.equal(rows[0]?.skillSetHashPrefix, null);
+  assert.deepEqual(
+    rows.filter((row) => row.promptFamily === 'family-a').map((row) => row.experimentAssignment),
+    ['exp-a', 'exp-b'],
+  );
+});
+
+test('site data validation rejects malformed tool usage payloads', async () => {
+  const fixture = await loadFixture();
+  const bundle = buildSiteDataBundle(prepareSourceAnalytics(fixture));
+
+  const invalidSchema = deepClone(bundle) as any;
+  invalidSchema.toolUsage.schemaVersion = 999;
+  assert.throws(
+    () => validateSiteDataBundle(invalidSchema),
+    /tool-usage.json has an unexpected schemaVersion/,
+  );
+
+  const missingToolName = deepClone(bundle) as any;
+  missingToolName.toolUsage.rows = [{ callCount: 1, runId: 'run-x' }];
+  missingToolName.toolUsage.summaryRows = [];
+  assert.throws(
+    () => validateSiteDataBundle(missingToolName),
+    /tool-usage.json row 0 is missing toolName/,
+  );
+
+  const missingRows = deepClone(bundle) as any;
+  delete missingRows.toolUsage.rows;
+  assert.throws(
+    () => validateSiteDataBundle(missingRows),
+    /tool-usage.json is missing rows/,
+  );
+
+  const nonObjectRow = deepClone(bundle) as any;
+  nonObjectRow.toolUsage.rows = [null];
+  assert.throws(
+    () => validateSiteDataBundle(nonObjectRow),
+    /tool-usage.json row 0 must be an object/,
+  );
+
+  const invalidCallCount = deepClone(bundle) as any;
+  invalidCallCount.toolUsage.rows = [{ toolName: 'bash', callCount: -1, runId: 'run-x' }];
+  invalidCallCount.toolUsage.summaryRows = [];
+  assert.throws(
+    () => validateSiteDataBundle(invalidCallCount),
+    /tool-usage.json row 0 has an invalid callCount/,
+  );
+
+  const missingRunId = deepClone(bundle) as any;
+  missingRunId.toolUsage.rows = [{ toolName: 'bash', callCount: 1 }];
+  missingRunId.toolUsage.summaryRows = [];
+  assert.throws(
+    () => validateSiteDataBundle(missingRunId),
+    /tool-usage.json row 0 is missing runId/,
+  );
+
+  const missingSummaryRows = deepClone(bundle) as any;
+  delete missingSummaryRows.toolUsage.summaryRows;
+  assert.throws(
+    () => validateSiteDataBundle(missingSummaryRows),
+    /tool-usage.json is missing summaryRows/,
+  );
+
+  const nonObjectSummaryRow = deepClone(bundle) as any;
+  nonObjectSummaryRow.toolUsage.summaryRows = [null];
+  assert.throws(
+    () => validateSiteDataBundle(nonObjectSummaryRow),
+    /tool-usage.json summary row 0 must be an object/,
+  );
+
+  const invalidSummaryRow = deepClone(bundle) as any;
+  invalidSummaryRow.toolUsage.summaryRows = [{ toolName: 'bash', callCount: 1 }];
+  assert.throws(
+    () => validateSiteDataBundle(invalidSummaryRow),
+    /tool-usage.json summary row 0 has an invalid affectedRunCount/,
+  );
+
+  const missingSummaryToolName = deepClone(bundle) as any;
+  missingSummaryToolName.toolUsage.summaryRows = [{ callCount: 1, affectedRunCount: 0 }];
+  assert.throws(
+    () => validateSiteDataBundle(missingSummaryToolName),
+    /tool-usage.json summary row 0 is missing toolName/,
+  );
+});
+
+test('writeSiteData rejects JSON targets and unexpected non-JSON files', async () => {
+  await withTempDir(async (dir) => {
+    const bundle = buildSiteDataBundle(prepareSourceAnalytics(await loadFixture()));
+    const populatedDir = path.join(dir, 'site-data');
+    await fs.mkdir(populatedDir, { recursive: true });
+    await fs.writeFile(path.join(populatedDir, 'notes.txt'), 'unexpected', 'utf8');
+
+    await assert.rejects(
+      async () => await writeSiteData(populatedDir, bundle),
+      /Unexpected non-JSON file found in site data directory: notes.txt/,
+    );
+    await assert.rejects(
+      async () => await writeSiteData(path.join(dir, 'site-data.json'), bundle),
+      /Site-data output must be a directory/,
+    );
+  });
+});

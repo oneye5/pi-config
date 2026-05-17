@@ -174,7 +174,7 @@ The regex captures the `\n\n` preamble prefix to avoid leaving orphaned newlines
 **Rationale**: 
 - The `Skill` interface (`SkillFrontmatter` → `loadSkillFromFile()`) only extracts `name`, `description`, `disableModelInvocation` — arbitrary frontmatter fields like `pinned` are dropped during loading. Detecting `pinned: true` would require re-parsing the raw SKILL.md file, adding complexity.
 - Config-based pinning keeps the pinning decision in the user/agent configuration layer, not in the skill authoring layer. A skill author shouldn't decide their skill is always relevant to every agent.
-- Config-based pinning is consistent with the `model-profiles.json` pattern (external config controls behavior).
+- Config-based pinning is consistent with the `model-profiles.yaml` pattern (external config controls behavior).
 - Adding frontmatter `pinned` later is a simple extension if needed (requires upstream `Skill` type change or raw file re-parsing).
 
 ### D8: Configuration — `settings.json` + Toggle
@@ -329,11 +329,13 @@ Note: Per-component scores (`triggerScore`, `keywordScore`, `nameScore`) are log
    - Import `formatSkillsForPrompt` from pi SDK
 
 6. **Tests**:
-   - **scorer.test.ts**: Trigger extraction from various description formats, trigger matching with positive/negative signals, keyword overlap with stop words, name matching with hyphens and connector words, composite scoring, degenerate case (all-equal scores → 0.5), gap detection, threshold with pinned skills vs ceiling
+   - **scorer.test.ts**: Trigger extraction from various description formats, trigger matching with positive/negative signals, keyword overlap with stop words, name matching with hyphens and connector words, composite scoring, degenerate case (all-equal scores → 0.5), gap detection, threshold with pinned skills vs ceiling, weighted Jaccard assertions
    - **config.test.ts**: Default values, validation, invalid config handling
-   - **integration.test.ts**: Full pipeline with mock skills → pruned skill list, system prompt string replacement (regex captures `\n\n` prefix, no double-newline artifact), fail-open path (regex doesn't match → original returned), empty skills array, all-zero scores, `/skill:name` expanded prompt produces high name-match
+   - **integration.test.ts**: Full pipeline with mock skills → pruned skill list, system prompt string replacement (regex captures `\n\n` prefix, no double-newline artifact), fail-open path (regex doesn't match → original returned), empty skills array, all-zero scores, `/skill:name` expanded prompt produces high name-match, off-mode baseline, auto-mode miss detection, pinned-not-found handling, disabled-skill exclusion, non-skill path no-event gate
 
 **Estimated size**: ~500-600 lines total across all files.
+
+**Deferred**: D9 aggregate analysis script → Phase 1.5. See `extensions/skill-pruner/README.md` § "Analysis (deferred)" for planned report fields. `data/pruning.jsonl` remains the source of truth.
 
 ### Phase 2: Tool Pruning (v2)
 

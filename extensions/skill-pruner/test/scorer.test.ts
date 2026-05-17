@@ -4,13 +4,15 @@ import type { Skill } from "@mariozechner/pi-coding-agent";
 import { DEFAULT_CONFIG } from "../config.js";
 import {
 	applyThreshold,
+	applyToolThreshold,
 	computeKeywordOverlap,
 	computeNameMatch,
 	computeTriggerMatch,
 	extractTriggers,
 	scoreSkills,
+	scoreTools,
 } from "../scorer.js";
-import type { PruningConfig, ScoredSkill } from "../types.js";
+import type { PruningConfig, ScoredSkill, ToolPruningConfig } from "../types.js";
 
 function skill(name: string, description: string): Skill {
 	return {
@@ -100,9 +102,24 @@ test("computeKeywordOverlap removes stop words", () => {
 });
 
 test("computeKeywordOverlap weights name-token matches higher than body-only matches", () => {
+	// Name tokens (2× weight in text bag) produce higher Jaccard than body tokens alone.
 	const bodyOnly = computeKeywordOverlap("zeta", "zeta filler", []);
 	const nameWeighted = computeKeywordOverlap("zeta", "filler", ["zeta"]);
 	assert.ok(nameWeighted > bodyOnly);
+});
+
+test("computeKeywordOverlap single name-token match scores less than 1.0 for multi-token text", () => {
+	// Query matching only one name token should score < 0.6 on multi-token body.
+	const score = computeKeywordOverlap("zeta", "alpha beta gamma delta epsilon", ["zeta"]);
+	assert.ok(score < 0.6, `expected < 0.6, got ${score}`);
+});
+
+test("computeKeywordOverlap name-only query scores higher than equal-count body-only query", () => {
+	// zeta appears 2× in text bag when it's a name token (2× weight), 1× when body.
+	// 2× intersection vs 1× intersection = strictly higher score.
+	const nameScore = computeKeywordOverlap("alpha", "beta gamma delta epsilon", ["alpha"]);
+	const bodyScore = computeKeywordOverlap("alpha", "alpha beta gamma delta epsilon", []);
+	assert.ok(nameScore > bodyScore, `nameScore=${nameScore}, bodyScore=${bodyScore}`);
 });
 
 test("computeNameMatch splits hyphenated names and skips connectors", () => {
@@ -172,4 +189,102 @@ test("applyThreshold all-equal degenerate case includes only floor by name asc",
 	const result = applyThreshold([scored("charlie", 0), scored("alpha", 0), scored("bravo", 0)], [], config({ floor: 2, ceiling: 5 }));
 	assert.deepEqual(result.included.map((s) => s.name), ["alpha", "bravo"]);
 	assert.deepEqual(result.excluded.map((s) => s.name), ["charlie"]);
+});
+
+// ---------------------------------------------------------------------------
+// Tool scoring tests
+// ---------------------------------------------------------------------------
+
+function toolConfig(overrides: Partial<ToolPruningConfig> = {}): ToolPruningConfig {
+	const base: ToolPruningConfig = {
+		tiers: {
+			read: "core",
+			edit: "core",
+			write: "core",
+			bash: "core",
+			subagent: "contextual",
+		},
+		dependencies: { edit: ["read"], subagent: ["bash"] },
+		ceiling: 5,
+	};
+	return { ...base, ...overrides, tiers: { ...base.tiers, ...(overrides.tiers ?? {}) }, dependencies: { ...base.dependencies, ...(overrides.dependencies ?? {}) } };
+}
+
+const toolDefinitions = [
+	{ name: "read", description: "Read file contents", parameters: {} },
+	{ name: "edit", description: "Edit a file using exact text replacement", parameters: {} },
+	{ name: "write", description: "Write content to a file", parameters: {} },
+	{ name: "bash", description: "Execute a bash command", parameters: {} },
+	{ name: "subagent", description: "Delegate tasks to specialized subagents", parameters: {} },
+	{ name: "web_search", description: "Search the web for information", parameters: {} },
+];
+
+test("scoreTools assigns core tier to undeclared tools that match tier config", () => {
+	const scores = scoreTools("read file contents", "", toolDefinitions, toolConfig());
+	const readScore = scores.find((s) => s.name === "read");
+	assert.equal(readScore?.tier, "core");
+});
+
+test("scoreTools assigns contextual tier to tools not in tier config", () => {
+	const scores = scoreTools("search the web", "", toolDefinitions, toolConfig());
+	const webSearchScore = scores.find((s) => s.name === "web_search");
+	assert.equal(webSearchScore?.tier, "contextual");
+});
+
+test("scoreTools computes composite from normalized keyword and name scores", () => {
+	const scores = scoreTools("web search information", "", toolDefinitions, toolConfig());
+	// compositeScore uses normalized scores, so we verify monotonic ordering instead
+	for (let i = 1; i < scores.length; i++) {
+		assert.ok(scores[i - 1].compositeScore >= scores[i].compositeScore);
+	}
+	for (const score of scores) {
+		assert.ok(score.compositeScore >= 0);
+		assert.ok(score.compositeScore <= 1.01); // allow small floating point
+	}
+});
+
+test("scoreTools sorts by composite score descending", () => {
+	const scores = scoreTools("search the web for information", "", toolDefinitions, toolConfig());
+	for (let i = 1; i < scores.length; i++) {
+		assert.ok(scores[i - 1].compositeScore >= scores[i].compositeScore);
+	}
+});
+
+test("applyToolThreshold includes all core tools", () => {
+	const scores = scoreTools("anything", "", toolDefinitions, toolConfig());
+	const result = applyToolThreshold(scores, toolDefinitions.map((t) => t.name), toolConfig());
+	assert.ok(result.included.includes("read"));
+	assert.ok(result.included.includes("edit"));
+	assert.ok(result.included.includes("bash"));
+	assert.ok(result.included.includes("write"));
+});
+
+test("applyToolThreshold excludes rare tools by default", () => {
+	const config = toolConfig({
+		tiers: { ...toolConfig().tiers, rare_tool: "rare" as const },
+	});
+	const toolsWithRare = [...toolDefinitions, { name: "rare_tool", description: "A rare tool", parameters: {} }];
+	const scores = scoreTools("anything", "", toolsWithRare, config);
+	const result = applyToolThreshold(scores, toolsWithRare.map((t) => t.name), config);
+	assert.ok(!result.included.includes("rare_tool"));
+	assert.ok(result.excluded.includes("rare_tool"));
+});
+
+test("applyToolThreshold respects ceiling for contextual tools", () => {
+	const config = toolConfig({ ceiling: 1 });
+	const scores = scoreTools("search the web", "", toolDefinitions, config);
+	const result = applyToolThreshold(scores, toolDefinitions.map((t) => t.name), config);
+	// Only 1 contextual tool should be included (web_search scored highest for this query)
+	const contextalsIncluded = result.included.filter((n) => !Object.entries(config.tiers).some(([k, v]) => k === n && v === "core"));
+	assert.ok(contextalsIncluded.length <= 1);
+});
+
+test("applyToolThreshold expands dependencies", () => {
+	const config = toolConfig({ ceiling: 5 });
+	const scores = scoreTools("delegate tasks", "", toolDefinitions, config);
+	const result = applyToolThreshold(scores, toolDefinitions.map((t) => t.name), config);
+	// If subagent is included, bash should also be included as a dependency
+	if (result.included.includes("subagent")) {
+		assert.ok(result.included.includes("bash"));
+	}
 });

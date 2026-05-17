@@ -14,6 +14,23 @@ interface RawProfileConfig {
   profiles?: Array<{ id?: unknown }>;
 }
 
+function loadYaml(filePath: string): RawProfileConfig {
+  const text = fs.readFileSync(filePath, 'utf8');
+  // Simple YAML parsing for coverage check: scan for '  - id: <value>' lines
+  const profiles: Array<{ id?: unknown }> = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s+-\s+id:\s+(.+)$/);
+    if (m) profiles.push({ id: m[1].trim() });
+  }
+  return { profiles };
+}
+
+function readConfig(repoRoot: string): RawProfileConfig {
+  const yamlPath = path.join(repoRoot, 'model-profiles.yaml');
+  if (fs.existsSync(yamlPath)) return loadYaml(yamlPath);
+  return readJson<RawProfileConfig>(path.join(repoRoot, 'model-profiles.json'));
+}
+
 function readJson<T>(filePath: string): T {
   return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
 }
@@ -21,7 +38,7 @@ function readJson<T>(filePath: string): T {
 test('every configured model has a matching model profile entry', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const models = readJson<RawModelConfig>(path.join(repoRoot, 'models.json'));
-  const profiles = readJson<RawProfileConfig>(path.join(repoRoot, 'model-profiles.json'));
+  const profiles = readConfig(repoRoot);
 
   const modelIds = Object.values(models.providers ?? {}).flatMap((provider) =>
     Array.isArray(provider.models)

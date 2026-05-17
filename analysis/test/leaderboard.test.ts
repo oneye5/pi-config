@@ -470,3 +470,131 @@ test('leaderboard correctly orders ranked before unranked with mixed data', asyn
     assert.ok(row.rank! >= 1, 'rank must be positive');
   }
 });
+
+test('leaderboard normalizes blank identifiers and sorts unranked ties deterministically', async () => {
+  const source = await loadFixture();
+  const baseRun = deepClone(source.completedRuns[0]!);
+  const fixture = deepClone(source);
+  fixture.completedRuns = [];
+  fixture.openRuns = [];
+  fixture.outcomes = [];
+
+  function makeUnscoredRun(runId: string, modelId: string | null, thinkingLevel: string | null) {
+    const run = deepClone(baseRun) as any;
+    run.runId = runId;
+    run.taskGroupId = `${runId}-task`;
+    run.status = 'closed_unscored';
+    run.scored = false;
+    run.finalizationReason = 'closed_unscored';
+    run.finalizedAt = '2026-05-10T14:19:00.000Z';
+    delete run.outcome;
+    if (modelId === null) {
+      delete run.modelId;
+    } else {
+      run.modelId = modelId;
+    }
+    if (thinkingLevel === null) {
+      run.thinkingLevel = '   ';
+    } else {
+      run.thinkingLevel = thinkingLevel;
+    }
+    return run;
+  }
+
+  fixture.completedRuns.push(
+    makeUnscoredRun('alpha-run-xhigh', 'alpha-model', 'xhigh'),
+    makeUnscoredRun('alpha-run-medium', 'alpha-model', 'medium'),
+    makeUnscoredRun('beta-run-2', 'beta-model', 'low'),
+    makeUnscoredRun('beta-run-1', 'beta-model', 'low'),
+    makeUnscoredRun('unknown-run', null, null),
+  );
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const leaderboard = createModelLeaderboard(prepared);
+
+  assert.equal(leaderboard.rows[0]?.modelId, 'beta-model');
+  assert.equal(leaderboard.rows[0]?.thinkingLevel, 'low');
+  assert.equal(leaderboard.rows[0]?.runCount, 2);
+  assert.deepEqual(
+    leaderboard.rows.slice(1).map((row) => `${row.modelId}:${row.thinkingLevel}`),
+    ['(unknown):(unspecified)', 'alpha-model:medium', 'alpha-model:xhigh'],
+  );
+});
+
+test('leaderboard handles large scored samples and ranked rows without token efficiency data', async () => {
+  const fixture = deepClone(await loadFixture());
+  const baseRun = fixture.completedRuns[0]!;
+  fixture.completedRuns = [];
+  fixture.openRuns = [];
+  fixture.outcomes = [];
+
+  function addScoredRuns(
+    modelId: string,
+    runCount: number,
+    tokenMode: 'normal' | 'none' | 'clamped',
+  ): void {
+    for (let index = 0; index < runCount; index += 1) {
+      const run = deepClone(baseRun);
+      run.runId = `${modelId}-run-${index}`;
+      run.taskGroupId = `${modelId}-task-${index}`;
+      run.modelId = modelId;
+      run.thinkingLevel = 'high';
+      run.status = 'scored';
+      run.scored = true;
+      run.finalizationReason = 'scored';
+      run.finalizedAt = '2026-05-10T14:19:00.000Z';
+      run.outcome = { resolution: 'resolved', satisfaction: tokenMode === 'none' ? 5 : 4 };
+      if (tokenMode === 'none') {
+        run.fileMutation.lineAdditions = 0;
+        run.fileMutation.lineDeletions = 0;
+        run.fileMutation.lineModifications = 0;
+      } else if (tokenMode === 'clamped') {
+        run.fileMutation.lineAdditions = 1;
+        run.fileMutation.lineDeletions = 0;
+        run.fileMutation.lineModifications = 0;
+        run.outputTokens = 500;
+      } else {
+        run.fileMutation.lineAdditions = 10;
+        run.fileMutation.lineDeletions = 0;
+        run.fileMutation.lineModifications = 0;
+        run.outputTokens = 100;
+      }
+      fixture.completedRuns.push(run);
+      fixture.outcomes.push({
+        schemaVersion: 1,
+        kind: 'run_outcome',
+        recordedAt: '2026-05-10T14:19:00.000Z',
+        sessionPath: baseRun.sessionPath,
+        runId: run.runId,
+        taskGroupId: run.taskGroupId,
+        outcome: run.outcome,
+      });
+    }
+  }
+
+  addScoredRuns('df-35-model', 35, 'normal');
+  addScoredRuns('df-55-model', 55, 'normal');
+  addScoredRuns('df-121-model', 121, 'normal');
+  addScoredRuns('df-122-model', 122, 'clamped');
+  addScoredRuns('no-token-model', 3, 'none');
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const leaderboard = createModelLeaderboard(prepared);
+
+  for (const modelId of ['df-35-model', 'df-55-model', 'df-121-model', 'df-122-model']) {
+    const row = leaderboard.rows.find((candidate) => candidate.modelId === modelId);
+    assert.ok(row?.rank !== null, `${modelId} should be ranked`);
+    assert.equal(row?.reliabilityFactor, 1, `${modelId} should receive full reliability factor`);
+  }
+
+  const clampedRow = leaderboard.rows.find((row) => row.modelId === 'df-122-model');
+  assert.equal(clampedRow?.dimensions.tokenEfficiency.value, 50);
+  assert.ok((clampedRow?.dimensions.tokenEfficiency.lowerBound ?? 0) <= 50);
+
+  const noTokenRow = leaderboard.rows.find((row) => row.modelId === 'no-token-model');
+  assert.ok(noTokenRow, 'no-token-model should appear');
+  assert.equal(noTokenRow.dimensions.tokenEfficiency.n, 0);
+  assert.equal(noTokenRow.dimensions.tokenEfficiency.value, null);
+  assert.equal(noTokenRow.dimensions.tokenEfficiency.lowerBound, null);
+  assert.ok(noTokenRow.rank !== null, 'models without token efficiency data should still be rankable');
+});

@@ -65,9 +65,11 @@ export class SessionTabActions {
     this.state.saveOpenTabs();
     this.scheduleRender();
 
-    void this.backend.request<{ requestId?: string }>('session.create', {
-      cwd,
-      selectionToken,
+    void this.state.enqueueLifecycle(async () => {
+      await this.backend.request<{ requestId?: string }>('session.create', {
+        cwd,
+        selectionToken,
+      });
     }).catch((err) => {
       this.state.handleSelectionFailure(
         selectionToken,
@@ -81,12 +83,13 @@ export class SessionTabActions {
   openSession(sessionPath: string): void {
     const existing = getSessionByPath(store.getState(), sessionPath);
     const wasOpenTab = store.getState().sessions.openTabPaths.includes(sessionPath);
-    this.state.bumpSessionDataEpoch(sessionPath);
+    const requestEpoch = this.state.bumpSessionDataEpoch(sessionPath);
     const selectionToken = this.state.beginSelectionRequest(
       sessionPath,
       undefined,
       wasOpenTab,
       !existing,
+      requestEpoch,
     );
 
     auditLog(this.context, 'session-service', 'session.open.requested', {
@@ -113,13 +116,14 @@ export class SessionTabActions {
     this.state.saveOpenTabs();
     this.scheduleRender();
 
-    void this.backend.request('session.open', { sessionPath, selectionToken })
-      .catch((err) => {
-        this.state.handleSelectionFailure(
-          selectionToken,
-          `Failed to open session: ${(err as Error).message}`,
-        );
-      });
+    void this.state.enqueueLifecycle(async () => {
+      await this.backend.request('session.open', { sessionPath, selectionToken });
+    }).catch((err) => {
+      this.state.handleSelectionFailure(
+        selectionToken,
+        `Failed to open session: ${(err as Error).message}`,
+      );
+    });
   }
 
   async closeSession(sessionPath: string): Promise<void> {

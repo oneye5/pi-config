@@ -8,11 +8,17 @@ export interface SessionOpenedTranscriptResolution {
 }
 
 function isEphemeralMessage(message: ChatMessage): boolean {
-  return message.status === 'streaming' || message.id.startsWith('local:');
+  return message.status === 'streaming'
+    || message.id.startsWith('local:')
+    || (message.toolCalls?.some((tc) => tc.status === 'running') ?? false);
 }
 
 function hasEphemeralLocalTranscript(localTranscript: ChatMessage[]): boolean {
   return localTranscript.some((message) => isEphemeralMessage(message));
+}
+
+function normalizeUserText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
 function userContentSignature(message: ChatMessage): string | null {
@@ -21,8 +27,17 @@ function userContentSignature(message: ChatMessage): string | null {
   }
 
   return JSON.stringify({
-    markdown: message.markdown ?? '',
-    images: message.userParts?.filter((part) => part.kind === 'image') ?? [],
+    markdown: normalizeUserText(message.markdown),
+    // Optimistic image rows can carry local-only metadata (name/width/height)
+    // that the authoritative transcript does not always round-trip. Deduplicate
+    // on the stable image payload instead of every transient display field.
+    images: message.userParts
+      ?.filter((part) => part.kind === 'image')
+      .map((part) => ({
+        mimeType: part.mimeType.trim().toLowerCase(),
+        dataBase64: part.dataBase64,
+      }))
+      ?? [],
   });
 }
 

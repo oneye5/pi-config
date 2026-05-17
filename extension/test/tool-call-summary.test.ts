@@ -215,6 +215,153 @@ test('getToolCallPresentation resolves read tool path inputs against cwd', () =>
   });
 });
 
+test('getToolCallPresentation resolves file URI path inputs against cwd', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: 'file:///D:/Projects/StandAloneProjects/pie/src/main.java',
+    },
+  }), {
+    workingDirectory: 'D:/Projects/StandAloneProjects/pie',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'src/main.java',
+    summaryPath: 'D:/Projects/StandAloneProjects/pie/src/main.java',
+  });
+});
+
+test('getToolCallPresentation keeps non-file URI path inputs as plain summaries', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: 'https://example.com/docs/spec.md',
+    },
+  }));
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'https://example.com/docs/spec.md',
+  });
+});
+
+test('getToolCallPresentation skips generic path linking for non-file tools', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'search_workspace',
+    input: {
+      path: '/repo/logs/app.log',
+    },
+  }), {
+    workingDirectory: '/repo',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'search_workspace',
+    summary: '/repo/logs/app.log',
+  });
+});
+
+test('getToolCallPresentation uses the first non-empty string from path arrays', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: ['   ', 'src/app.ts', 'README.md'],
+    },
+  }), {
+    workingDirectory: '/repo',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'src/app.ts',
+    summaryPath: '/repo/src/app.ts',
+  });
+});
+
+test('getToolCallPresentation keeps same-directory absolute paths absolute instead of producing empty relatives', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: '/repo',
+    },
+  }), {
+    workingDirectory: '/repo',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: '/repo',
+    summaryPath: '/repo',
+  });
+});
+
+test('getToolCallPresentation joins relative paths from filesystem roots correctly', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: 'notes/todo.md',
+    },
+  }), {
+    workingDirectory: '/',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'notes/todo.md',
+    summaryPath: '/notes/todo.md',
+  });
+});
+
+test('getToolCallPresentation resolves UNC file URIs to clickable relative summaries', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: 'file://server/share/project/notes.md',
+    },
+  }), {
+    workingDirectory: '//server/share',
+  });
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'project/notes.md',
+    summaryPath: '//server/share/project/notes.md',
+  });
+});
+
+test('getToolCallPresentation truncates oversized file names even when no parent path can fit', () => {
+  const fileName = `${'a'.repeat(300)}.ts`;
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: `/repo/${fileName}`,
+    },
+  }));
+
+  assert.equal(presentation.name, 'read');
+  assert.ok(presentation.summary);
+  assert.equal(presentation.summaryPath, `/repo/${fileName}`);
+  assert.ok(presentation.summary.length <= 240);
+  assert.ok(!presentation.summary.includes('/repo/'));
+  assert.ok(presentation.summary.endsWith('...'));
+});
+
+test('getToolCallPresentation ignores blank path candidates and falls back to other readable fields', () => {
+  const presentation = getToolCallPresentation(makeToolCall({
+    name: 'read',
+    input: {
+      path: '   ',
+      text: 'Look in the transcript panel instead',
+    },
+  }));
+
+  assert.deepEqual(presentation, {
+    name: 'read',
+    summary: 'Look in the transcript panel instead',
+  });
+});
+
 test('getToolCallPresentation skips read hints for non-file open tools', () => {
   const presentation = getToolCallPresentation(makeToolCall({
     name: 'open_url',
@@ -449,6 +596,89 @@ test('summarizeToolCall compresses multi-task subagent input', () => {
   }));
 
   assert.equal(summary, 'scout: Trace collapsed tool-card rendering +1 more');
+});
+
+test('summarizeToolCall compresses generic chain task entries', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'delegate_workflow',
+    input: {
+      chain: [
+        { agent: 'planner', task: 'Break the UI fix into steps' },
+        { agent: 'reviewer', task: 'Check the final transcript rendering' },
+      ],
+    },
+  }));
+
+  assert.equal(summary, 'planner: Break the UI fix into steps +1 more');
+});
+
+test('summarizeToolCall compresses package lists with remainder counts', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'install_packages',
+    input: {
+      packageList: ['react', 'preact', 'marked', 'dompurify'],
+    },
+  }));
+
+  assert.equal(summary, 'react, preact, marked +1 more');
+});
+
+test('summarizeToolCall can reuse nested record values when direct fields are absent', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'analyze',
+    input: {
+      metadata: {
+        description: 'Inspect the transcript ordering logic',
+      },
+    },
+  }));
+
+  assert.equal(summary, 'Inspect the transcript ordering logic');
+});
+
+test('summarizeToolCall falls back to compact JSON for otherwise unsupported objects', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'toggle_flag',
+    input: {
+      enabled: false,
+      retries: 0,
+    },
+  }));
+
+  assert.equal(summary, '{"enabled":false,"retries":0}');
+});
+
+test('summarizeToolCall handles primitive inputs directly', () => {
+  assert.equal(summarizeToolCall(makeToolCall({ name: 'echo', input: true })), 'true');
+  assert.equal(summarizeToolCall(makeToolCall({ name: 'echo', input: 7 })), '7');
+});
+
+test('summarizeToolCall can inspect the first object inside arrays', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'inspect',
+    input: [
+      { description: 'Check the transcript rendering output' },
+      { description: 'Ignore the second item' },
+    ],
+  }));
+
+  assert.equal(summary, 'Check the transcript rendering output');
+});
+
+test('summarizeToolCall omits agent prefixes when task entries do not provide one', () => {
+  const summary = summarizeToolCall(makeToolCall({
+    name: 'delegate_workflow',
+    input: {
+      chain: [{ task: 'Check the system prompt rendering path' }],
+    },
+  }));
+
+  assert.equal(summary, 'Check the system prompt rendering path');
+});
+
+test('summarizeToolCall returns null for empty strings and empty objects', () => {
+  assert.equal(summarizeToolCall(makeToolCall({ name: 'noop', input: '   ' })), null);
+  assert.equal(summarizeToolCall(makeToolCall({ name: 'noop', input: {} })), null);
 });
 
 test('summarizeToolCall uses explanation before raw patch payloads', () => {

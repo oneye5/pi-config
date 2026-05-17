@@ -87,6 +87,53 @@ test('rawMessagesToChatMessages still supports legacy user-carried tool results'
   assert.deepEqual(assistant?.toolCalls?.[0]?.result, { lines: 42 });
 });
 
+test('rawMessagesToChatMessages merges adjacent assistant chunks and keeps reasoning parts', () => {
+  const messages = rawMessagesToChatMessages([
+    {
+      role: 'assistant',
+      content: 'Starting analysis. ',
+      timestamp: Date.parse('2026-01-01T00:00:00.000Z'),
+    },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Inspect files carefully. ' },
+        { type: 'text', text: 'Done.' },
+        { type: 'toolCall', id: 'tc-1', name: 'read', arguments: { path: 'panel.css' } },
+      ],
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'tc-1',
+      details: { lines: 42 },
+    },
+  ] as any, 'subagent');
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.role, 'assistant');
+  assert.equal(messages[0]?.markdown, 'Starting analysis. Done.');
+  assert.equal(messages[0]?.thinking, 'Inspect files carefully. ');
+  assert.equal(messages[0]?.toolCalls?.[0]?.status, 'completed');
+  assert.deepEqual(messages[0]?.toolCalls?.[0]?.result, { lines: 42 });
+});
+
+test('rawMessagesToChatMessages joins multi-part user text with paragraph breaks', () => {
+  const messages = rawMessagesToChatMessages([
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'First paragraph' },
+        { type: 'text', text: 'Second paragraph' },
+      ],
+    },
+  ] as any, 'subagent');
+
+  assert.deepEqual(
+    messages.map((message) => ({ role: message.role, markdown: message.markdown })),
+    [{ role: 'user', markdown: 'First paragraph\n\nSecond paragraph' }],
+  );
+});
+
 test('getRenderableSubagentResult falls back when a failed parallel dispatch has no child results', () => {
   assert.equal(getRenderableSubagentResult({
     content: [{ type: 'text', text: 'Too many parallel tasks (6). Max is 5.' }],
@@ -115,6 +162,46 @@ test('getRenderableSubagentResultFromToolCall synthesizes running single-mode st
       }],
     },
   );
+});
+
+test('getRenderableSubagentResult prefers top-level results when both top-level and nested details exist', () => {
+  const result = getRenderableSubagentResult({
+    mode: 'single',
+    results: [{
+      agent: 'scout',
+      task: 'Inspect regression',
+      exitCode: 0,
+      messages: [],
+    }],
+    details: {
+      mode: 'single',
+      results: [{
+        agent: 'reviewer',
+        task: 'Review regression',
+        exitCode: 1,
+        messages: [],
+      }],
+    },
+  } as any);
+
+  assert.equal(result?.results[0]?.agent, 'scout');
+});
+
+test('getRenderableSubagentResult reads nested details payloads when top-level results are absent', () => {
+  const result = getRenderableSubagentResult({
+    details: {
+      mode: 'parallel',
+      results: [{
+        agent: 'reviewer',
+        task: 'Review regression',
+        exitCode: 0,
+        messages: [],
+      }],
+    },
+  } as any);
+
+  assert.equal(result?.mode, 'parallel');
+  assert.equal(result?.results[0]?.agent, 'reviewer');
 });
 
 test('getRenderableSubagentResultFromToolCall synthesizes fresh running chain-mode state from the first step', () => {
@@ -194,6 +281,88 @@ test('getRenderableSubagentResultFromToolCall keeps empty multi-result progress 
   }
 });
 
+test('getRenderableSubagentResultFromToolCall keeps completed child output visible while the parent call is still running', () => {
+  const result = getRenderableSubagentResultFromToolCall({
+    input: { agent: 'reviewer', task: 'Inspect regression' },
+    result: {
+      details: {
+        mode: 'single',
+        results: [{
+          agent: 'reviewer',
+          task: 'Inspect regression',
+          exitCode: 0,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }],
+        }],
+      },
+    },
+    status: 'running',
+  } as any);
+
+  assert.equal(result?.results[0]?.exitCode, 0);
+  assert.deepEqual(
+    subagentSingleResultToChatMessages(result!.results[0]!, 'subagent').map((message) => message.markdown),
+    ['Inspect regression', 'Done.'],
+  );
+});
+
+test('getRenderableSubagentResultFromToolCall preserves failed child states while the parent call is still running', () => {
+  const result = getRenderableSubagentResultFromToolCall({
+    input: { agent: 'reviewer', task: 'Inspect regression' },
+    result: {
+      details: {
+        mode: 'single',
+        results: [{
+          agent: 'reviewer',
+          task: 'Inspect regression',
+          exitCode: 1,
+          messages: [],
+          errorMessage: 'spawn EPERM',
+        }],
+      },
+    },
+    status: 'running',
+  } as any);
+
+  assert.equal(result?.results[0]?.exitCode, 1);
+  assert.equal(result?.results[0]?.errorMessage, 'spawn EPERM');
+});
+
+test('getRenderableSubagentResultFromToolCall ignores running placeholders without valid agent and task text', () => {
+  assert.equal(
+    getRenderableSubagentResultFromToolCall({
+      input: {
+        tasks: [
+          { agent: '   ', task: 'Inspect regression' },
+          { agent: 'reviewer', task: '   ' },
+        ],
+      },
+      result: undefined,
+      status: 'running',
+    } as any),
+    undefined,
+  );
+});
+
+test('getRenderableSubagentResultFromToolCall leaves completed result payloads unchanged once the parent call is done', () => {
+  const result = getRenderableSubagentResultFromToolCall({
+    input: { agent: 'reviewer', task: 'Inspect regression' },
+    result: {
+      details: {
+        mode: 'single',
+        results: [{
+          agent: 'reviewer',
+          task: 'Inspect regression',
+          exitCode: 0,
+          messages: [],
+        }],
+      },
+    },
+    status: 'completed',
+  } as any);
+
+  assert.equal(result?.results[0]?.exitCode, 0);
+});
+
 test('formatToolCallResultForDisplay extracts readable top-level subagent failure text', () => {
   assert.equal(
     formatToolCallResultForDisplay({
@@ -252,6 +421,32 @@ test('subagentSingleResultToChatMessages prepends the delegated task when nested
   );
 });
 
+test('subagentSingleResultToChatMessages does not duplicate a nested delegated user task', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: 'Outer task',
+    exitCode: 0,
+    messages: [
+      {
+        role: 'user',
+        content: 'Inner delegated task',
+      },
+      {
+        role: 'assistant',
+        content: 'Resolved.',
+      },
+    ],
+  } as any, 'subagent');
+
+  assert.deepEqual(
+    messages.map((message) => ({ role: message.role, markdown: message.markdown })),
+    [
+      { role: 'user', markdown: 'Inner delegated task' },
+      { role: 'assistant', markdown: 'Resolved.' },
+    ],
+  );
+});
+
 test('subagentSingleResultToChatMessages synthesizes failure details when no nested messages exist', () => {
   const messages = subagentSingleResultToChatMessages({
     agent: 'reviewer',
@@ -269,6 +464,45 @@ test('subagentSingleResultToChatMessages synthesizes failure details when no nes
   assert.match(messages[1]?.markdown ?? '', /spawn EPERM/);
 });
 
+test('subagentSingleResultToChatMessages trims aborted fallback details', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: 'Inspect cancellation',
+    exitCode: 1,
+    messages: [],
+    stderr: '  cancelled by caller  ',
+    stopReason: 'aborted',
+  } as any, 'subagent');
+
+  assert.equal(messages[1]?.markdown, 'Aborted: cancelled by caller');
+  assert.equal(messages[1]?.status, 'error');
+});
+
+test('subagentSingleResultToChatMessages uses exit codes when no explicit stop reason is present', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: 'Inspect process failure',
+    exitCode: 23,
+    messages: [],
+    stderr: ' permission denied ',
+  } as any, 'subagent');
+
+  assert.equal(messages[1]?.markdown, 'Exit code 23: permission denied');
+  assert.equal(messages[1]?.status, 'error');
+});
+
+test('subagentSingleResultToChatMessages uses a generic failure message when no details are available', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: 'Inspect unexplained failure',
+    exitCode: 2,
+    messages: [],
+  } as any, 'subagent');
+
+  assert.equal(messages[1]?.markdown, 'Exit code 2: agent failed before producing any output.');
+  assert.equal(messages[1]?.status, 'error');
+});
+
 test('subagentSingleResultToChatMessages keeps placeholder running results in task form instead of mislabeling them as failures', () => {
   const messages = subagentSingleResultToChatMessages({
     agent: 'reviewer',
@@ -281,4 +515,60 @@ test('subagentSingleResultToChatMessages keeps placeholder running results in ta
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.role, 'user');
   assert.equal(messages[0]?.markdown, 'Inspect dispatch failure');
+});
+
+test('subagentSingleResultToChatMessages renders streaming assistant output for in-progress runs', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: 'Inspect streaming output',
+    exitCode: -1,
+    messages: [],
+    streamingText: 'Still working... ',
+  } as any, 'subagent');
+
+  assert.deepEqual(
+    messages.map((message) => ({ role: message.role, markdown: message.markdown, status: message.status })),
+    [
+      { role: 'user', markdown: 'Inspect streaming output', status: 'completed' },
+      { role: 'assistant', markdown: 'Still working...', status: 'streaming' },
+    ],
+  );
+});
+
+test('subagentSingleResultToChatMessages renders a completed no-output fallback when no task or nested transcript exists', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: '   ',
+    exitCode: 0,
+    messages: [],
+  } as any, 'subagent');
+
+  assert.deepEqual(
+    messages.map((message) => ({ role: message.role, markdown: message.markdown, status: message.status })),
+    [{ role: 'assistant', markdown: '(no output)', status: 'completed' }],
+  );
+});
+
+test('subagentSingleResultToChatMessages omits model metadata from synthesized no-output fallbacks', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: '   ',
+    exitCode: 0,
+    model: 'gpt-4.1',
+    messages: [],
+  } as any, 'subagent');
+
+  assert.equal(messages[0]?.role, 'assistant');
+  assert.equal(messages[0]?.modelId, undefined);
+});
+
+test('subagentSingleResultToChatMessages returns no rows for running results without task text or transcript', () => {
+  const messages = subagentSingleResultToChatMessages({
+    agent: 'reviewer',
+    task: '   ',
+    exitCode: -1,
+    messages: [],
+  } as any, 'subagent');
+
+  assert.deepEqual(messages, []);
 });

@@ -6,6 +6,9 @@ import * as os from "node:os";
 import type { Message } from "@mariozechner/pi-ai";
 import type { DisplayItem } from "./types.js";
 
+/** Max characters shown in a bash command preview. */
+const COMMAND_PREVIEW_MAX_LENGTH = 60;
+
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -52,7 +55,7 @@ export function formatToolCall(
 	switch (toolName) {
 		case "bash": {
 			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
+			const preview = command.length > COMMAND_PREVIEW_MAX_LENGTH ? `${command.slice(0, COMMAND_PREVIEW_MAX_LENGTH)}...` : command;
 			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
 		}
 		case "read": {
@@ -195,7 +198,7 @@ export function formatSelectionInfo(
 		parts.push(themeFg("warning", `fallback #${result.retryCount}`) + themeFg("dim", ` (skipped ${shortenModelId(result.failedModel)})`));
 	}
 
-	// Model resolution diagnostic: model-profiles.json override not found in registry
+	// Model resolution diagnostic: model-profiles override not found in registry
 	if (result.modelResolutionDiagnostic) {
 		parts.push(themeFg("warning", "⚠ ") + themeFg("dim", result.modelResolutionDiagnostic));
 	}

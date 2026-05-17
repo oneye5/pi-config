@@ -1,65 +1,158 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import test from 'node:test';
 
 import { _clearSubagentProfilesCache, loadSubagentProfiles } from '../src/backend/subagent-profiles';
 
-function makeAgentDir(profilesJson: string | null): string {
+function makeAgentDir(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pie-subagent-profiles-'));
-  if (profilesJson !== null) {
-    fs.writeFileSync(path.join(dir, 'model-profiles.json'), profilesJson);
+  for (const [name, content] of Object.entries(files)) {
+    fs.writeFileSync(path.join(dir, name), content);
   }
   return dir;
 }
 
-test('loadSubagentProfiles parses eligible/ineligible profiles and computes aggregate rating', () => {
+test('loadSubagentProfiles parses YAML content and skips invalid profile entries', () => {
   _clearSubagentProfilesCache();
-  const agentDir = makeAgentDir(JSON.stringify({
-    profiles: [
-      { _comment: 'header — ignored' },
-      { id: 'good', precision: 4, creativity: 5, thoroughness: 4, reasoning: 5, eligible: true },
-      { id: 'bad', precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, eligible: false, _disabled_reason: 'incompatible API' },
-    ],
-  }));
+  const agentDir = makeAgentDir({
+    'model-profiles.yaml': JSON.stringify({
+      profiles: [
+        { id: 'good', precision: 4, creativity: 5, thoroughness: 4, reasoning: 5, eligible: true },
+        { id: 'zeroed', precision: 'bad', creativity: null, thoroughness: {}, reasoning: 3, eligible: 'yes', disabled_reason: '' },
+        null,
+        { id: '', precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true },
+      ],
+    }),
+  });
 
   const profiles = loadSubagentProfiles(agentDir);
   assert.deepEqual(profiles.get('good'), { eligible: true, aggregate: 18 });
+  assert.deepEqual(profiles.get('zeroed'), { eligible: false, aggregate: 3 });
+  assert.equal(profiles.size, 2);
+});
+
+test('loadSubagentProfiles prefers YAML over JSON and falls back to .yml when needed', () => {
+  _clearSubagentProfilesCache();
+  const yamlPreferredDir = makeAgentDir({
+    'model-profiles.yaml': JSON.stringify({
+      profiles: [{ id: 'from-yaml', precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: true }],
+    }),
+    'model-profiles.json': JSON.stringify({
+      profiles: [{ id: 'from-json', precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true }],
+    }),
+  });
+  const yamlProfiles = loadSubagentProfiles(yamlPreferredDir);
+  assert.ok(yamlProfiles.has('from-yaml'));
+  assert.ok(!yamlProfiles.has('from-json'));
+
+  _clearSubagentProfilesCache();
+  const ymlFallbackDir = makeAgentDir({
+    'model-profiles.yml': JSON.stringify({
+      profiles: [{ id: 'from-yml', precision: 2, creativity: 2, thoroughness: 2, reasoning: 2, eligible: false }],
+    }),
+  });
+  const ymlProfiles = loadSubagentProfiles(ymlFallbackDir);
+  assert.deepEqual(ymlProfiles.get('from-yml'), { eligible: false, aggregate: 8 });
+});
+
+test('loadSubagentProfiles tolerates malformed YAML without throwing', () => {
+  _clearSubagentProfilesCache();
+  const agentDir = makeAgentDir({ 'model-profiles.yaml': '::{ not valid yaml' });
+  const profiles = loadSubagentProfiles(agentDir);
+  assert.equal(profiles.size, 0);
+});
+
+test('loadSubagentProfiles falls back to JSON when no YAML exists', () => {
+  _clearSubagentProfilesCache();
+  const agentDir = makeAgentDir({
+    'model-profiles.json': JSON.stringify({
+      profiles: [
+        { id: 'good', precision: 4, creativity: 5, thoroughness: 4, reasoning: 5, eligible: true },
+        { id: 'bad', precision: 3, creativity: 3, thoroughness: 3, reasoning: 3, eligible: false, disabled_reason: 'incompatible API' },
+      ],
+    }),
+  });
+  const profiles = loadSubagentProfiles(agentDir);
+  assert.deepEqual(profiles.get('good'), { eligible: true, aggregate: 18 });
   assert.deepEqual(profiles.get('bad'), { eligible: false, aggregate: 12, disabledReason: 'incompatible API' });
-  assert.equal(profiles.has('header'), false);
 });
 
-test('loadSubagentProfiles returns an empty map when the profiles file is missing', () => {
+test('loadSubagentProfiles returns an empty map for malformed JSON, empty agent dirs, and empty input paths', () => {
   _clearSubagentProfilesCache();
-  const agentDir = makeAgentDir(null);
-  const profiles = loadSubagentProfiles(agentDir);
-  assert.equal(profiles.size, 0);
+  const malformedDir = makeAgentDir({ 'model-profiles.json': '{ this is not json' });
+  assert.equal(loadSubagentProfiles(malformedDir).size, 0);
+
+  _clearSubagentProfilesCache();
+  const missingDir = makeAgentDir({});
+  assert.equal(loadSubagentProfiles(missingDir).size, 0);
+  assert.equal(loadSubagentProfiles('').size, 0);
 });
 
-test('loadSubagentProfiles tolerates malformed JSON without throwing', () => {
+test('loadSubagentProfiles reuses cached maps until the file changes and clears cache when the file disappears', () => {
   _clearSubagentProfilesCache();
-  const agentDir = makeAgentDir('{ this is not json');
-  const profiles = loadSubagentProfiles(agentDir);
-  assert.equal(profiles.size, 0);
-});
+  const fileName = 'model-profiles.json';
+  const agentDir = makeAgentDir({
+    [fileName]: JSON.stringify({
+      profiles: [{ id: 'cached', precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true }],
+    }),
+  });
+  const filePath = path.join(agentDir, fileName);
 
-test('loadSubagentProfiles reloads when the profiles file is updated', () => {
-  _clearSubagentProfilesCache();
-  const agentDir = makeAgentDir(JSON.stringify({
-    profiles: [{ id: 'm', precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true }],
-  }));
-  const filePath = path.join(agentDir, 'model-profiles.json');
-  assert.equal(loadSubagentProfiles(agentDir).get('m')?.aggregate, 4);
+  const first = loadSubagentProfiles(agentDir);
+  const second = loadSubagentProfiles(agentDir);
+  assert.equal(second, first);
+  assert.equal(second.get('cached')?.aggregate, 4);
 
-  // Bump mtime forward to guarantee the cache invalidates on file systems with
-  // coarse mtime resolution.
-  const future = new Date(Date.now() + 5000);
+  fs.rmSync(filePath);
+  const emptied = loadSubagentProfiles(agentDir);
+  assert.equal(emptied.size, 0);
+
   fs.writeFileSync(filePath, JSON.stringify({
-    profiles: [{ id: 'm', precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: false }],
+    profiles: [{ id: 'cached', precision: 5, creativity: 5, thoroughness: 5, reasoning: 5, eligible: false }],
   }));
+  const future = new Date(Date.now() + 5000);
   fs.utimesSync(filePath, future, future);
+  const reloaded = loadSubagentProfiles(agentDir);
+  assert.deepEqual(reloaded.get('cached'), { eligible: false, aggregate: 20 });
+});
 
-  const reloaded = loadSubagentProfiles(agentDir).get('m');
-  assert.deepEqual(reloaded, { eligible: false, aggregate: 20 });
+test('loadSubagentProfiles tolerates stat and read races without throwing', () => {
+  _clearSubagentProfilesCache();
+  const agentDir = makeAgentDir({
+    'model-profiles.json': JSON.stringify({
+      profiles: [{ id: 'race', precision: 1, creativity: 1, thoroughness: 1, reasoning: 1, eligible: true }],
+    }),
+  });
+
+  const fsModule = require('node:fs') as typeof import('node:fs');
+  const originalStatSync = fsModule.statSync;
+  fsModule.statSync = ((filePath: Parameters<typeof originalStatSync>[0], ...args: Parameters<typeof originalStatSync> extends [any, ...infer Rest] ? Rest : never) => {
+    if (String(filePath).endsWith('model-profiles.json')) {
+      throw new Error('simulated stat race');
+    }
+    return originalStatSync(filePath as any, ...(args as []));
+  }) as typeof originalStatSync;
+
+  try {
+    assert.equal(loadSubagentProfiles(agentDir).size, 0);
+  } finally {
+    fsModule.statSync = originalStatSync;
+  }
+
+  _clearSubagentProfilesCache();
+  const originalReadFileSync = fsModule.readFileSync;
+  fsModule.readFileSync = ((filePath: Parameters<typeof originalReadFileSync>[0], ...args: Parameters<typeof originalReadFileSync> extends [any, ...infer Rest] ? Rest : never) => {
+    if (String(filePath).endsWith('model-profiles.json')) {
+      throw new Error('simulated read race');
+    }
+    return originalReadFileSync(filePath as any, ...(args as []));
+  }) as typeof originalReadFileSync;
+
+  try {
+    assert.equal(loadSubagentProfiles(agentDir).size, 0);
+  } finally {
+    fsModule.readFileSync = originalReadFileSync;
+  }
 });

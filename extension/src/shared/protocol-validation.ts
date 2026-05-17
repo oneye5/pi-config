@@ -21,6 +21,7 @@
 import type {
   ChatPrefs,
   ComposerInputDraft,
+  PruningSettings,
   RunOutcome,
   ThinkingLevel,
   WebviewToHostMessage,
@@ -118,6 +119,7 @@ function validateChatPrefsPatch(value: unknown): value is Partial<ChatPrefs> {
     'autoExpandToolCalls',
     'autoExpandSubagentCalls',
     'suppressCompletionNotifications',
+    'showPruningMessages',
   ];
   const toggleKeys: Array<keyof ChatPrefs> = [
     'extensionToggles',
@@ -129,6 +131,23 @@ function validateChatPrefsPatch(value: unknown): value is Partial<ChatPrefs> {
       if (v !== undefined && typeof v !== 'boolean') return false;
     } else if ((toggleKeys as string[]).includes(key)) {
       if (v !== undefined && !isStringBooleanRecord(v)) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+const VALID_PRUNING_MODES = new Set(['auto', 'shadow', 'off']);
+
+function validatePruningSettingsPatch(value: unknown): value is Partial<PruningSettings> {
+  if (!isObject(value)) return false;
+  for (const key of Object.keys(value)) {
+    const v = (value as Record<string, unknown>)[key];
+    if (key === 'mode') {
+      if (v !== undefined && (typeof v !== 'string' || !VALID_PRUNING_MODES.has(v))) return false;
+    } else if (key === 'skillCeiling' || key === 'toolCeiling') {
+      if (v !== undefined && (!isFiniteNumber(v) || (v as number) < 1)) return false;
     } else {
       return false;
     }
@@ -158,7 +177,6 @@ export function validateWebviewToHostMessage(
     case 'refreshState':
     case 'requestSnapshot':
     case 'openFilePicker':
-    case 'interrupt':
     case 'newSession':
       return { ok: true, value: value as WebviewToHostMessage };
 
@@ -177,12 +195,18 @@ export function validateWebviewToHostMessage(
       return { ok: true, value: value as WebviewToHostMessage };
 
     case 'send':
+      if (!isString(value.sessionPath)) return fail('send: missing `sessionPath`');
       if (!isString(value.text)) return fail('send: missing string `text`');
       return { ok: true, value: value as WebviewToHostMessage };
 
     case 'editMessage':
+      if (!isString(value.sessionPath)) return fail('editMessage: missing `sessionPath`');
       if (!isString(value.messageId)) return fail('editMessage: missing `messageId`');
       if (!isString(value.text)) return fail('editMessage: missing `text`');
+      return { ok: true, value: value as WebviewToHostMessage };
+
+    case 'interrupt':
+      if (!isString(value.sessionPath)) return fail('interrupt: missing `sessionPath`');
       return { ok: true, value: value as WebviewToHostMessage };
 
     case 'openSession':
@@ -220,6 +244,10 @@ export function validateWebviewToHostMessage(
 
     case 'setPrefs':
       if (!validateChatPrefsPatch(value.prefs)) return fail('setPrefs: invalid `prefs` patch');
+      return { ok: true, value: value as WebviewToHostMessage };
+
+    case 'setPruningSettings':
+      if (!validatePruningSettingsPatch(value.settings)) return fail('setPruningSettings: invalid `settings` patch');
       return { ok: true, value: value as WebviewToHostMessage };
 
     case 'openFileDiff':

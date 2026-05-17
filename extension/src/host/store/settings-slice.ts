@@ -4,10 +4,13 @@ import type {
   ContextWindowUsage,
   ModelInfo,
   ModelSettings,
+  PruningSettings,
 } from '../../shared/protocol';
+import { DEFAULT_PRUNING_SETTINGS } from '../../shared/protocol';
 
 interface SettingsState {
   modelSettings: ModelSettings | null;
+  pruningSettings: PruningSettings;
   availableModelsBySession: Record<string, ModelInfo[]>;
   contextUsageBySession: Record<string, ContextWindowUsage | null>;
 }
@@ -18,12 +21,16 @@ const settingsSlice = createSlice({
   name: 'settings',
   initialState: {
     modelSettings: null,
+    pruningSettings: DEFAULT_PRUNING_SETTINGS,
     availableModelsBySession: {},
     contextUsageBySession: {},
   } as SettingsState,
   reducers: {
     setModelSettings(state, action: PayloadAction<ModelSettings>) {
       state.modelSettings = action.payload;
+    },
+    setPruningSettings(state, action: PayloadAction<PruningSettings>) {
+      state.pruningSettings = action.payload;
     },
     setAvailableModels(
       state,

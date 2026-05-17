@@ -98,3 +98,40 @@ test('listStorageDirCandidates ignores directories without analytics artifacts',
     assert.equal(candidates[0]?.storageDir, includedDir);
   });
 });
+
+test('workspace and outcomes discovery tolerate missing directories', async () => {
+  await withTempDir(async (root) => {
+    const missingWorkspaceRoot = path.join(root, 'missing-workspace');
+    const expectedRootHash = workspaceStorageHash(buildWorkspaceAnalyticsIdFromRoot(missingWorkspaceRoot, 'linux'));
+
+    const hashes = await workspaceStorageHashCandidates(missingWorkspaceRoot, 'linux');
+    assert.equal(hashes.size, 1);
+    assert.ok(hashes.has(expectedRootHash));
+
+    const missingOutcomesRoot = path.join(root, 'missing-outcomes');
+    assert.deepEqual(await listStorageDirCandidates(missingOutcomesRoot), []);
+    assert.equal(await detectLatestStorageDir(missingOutcomesRoot), null);
+    assert.equal(await detectPreferredStorageDir(missingOutcomesRoot, missingWorkspaceRoot, 'linux'), null);
+  });
+});
+
+test('listStorageDirCandidates sorts tied directories alphabetically and rethrows invalid roots', async () => {
+  await withTempDir(async (root) => {
+    const outcomesRoot = path.join(root, 'outcomes');
+    await fs.mkdir(outcomesRoot, { recursive: true });
+
+    await writeArtifact(path.join(outcomesRoot, 'bbbbbbbbbbbbbbbb'), 'run-snapshots.jsonl', 12_000);
+    await writeArtifact(path.join(outcomesRoot, 'aaaaaaaaaaaaaaaa'), 'outcome-history.jsonl', 12_000);
+    await fs.writeFile(path.join(outcomesRoot, 'notes.txt'), 'ignore me', 'utf8');
+
+    const candidates = await listStorageDirCandidates(outcomesRoot);
+    assert.deepEqual(
+      candidates.map((candidate) => path.basename(candidate.storageDir)),
+      ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'],
+    );
+
+    const fileBackedRoot = path.join(root, 'outcomes-file');
+    await fs.writeFile(fileBackedRoot, 'not a directory', 'utf8');
+    await assert.rejects(async () => await listStorageDirCandidates(fileBackedRoot));
+  });
+});

@@ -1,0 +1,359 @@
+﻿
+.notice {
+  margin: 0 10px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-warning);
+  border-radius: 10px;
+  background: var(--panel-warning-surface);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+  flex-shrink: 0;
+}
+
+.notice.error {
+  border-color: var(--panel-danger);
+  background: var(--panel-danger-surface);
+}
+
+body.session-tab-dragging {
+  user-select: none;
+}
+
+.session-tabs {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  padding: 6px 10px 6px;
+  position: relative;
+  background: var(--session-tabs-strip-surface);
+  box-shadow: inset 0 -1px 0 var(--panel-border);
+  border: none;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.session-tabs.dragging .session-tabs-strip,
+.session-tabs.dragging .session-tab-main,
+.session-tabs.dragging .session-tab-close {
+  cursor: grabbing;
+}
+
+.session-tabs-strip {
+  --session-tab-min-width: 120px;
+  --session-tab-max-width: 232px;
+  display: flex;
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  scrollbar-width: none;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 2px;
+  position: relative;
+}
+
+.session-tabs-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.session-tab {
+  --session-tab-surface: var(--session-tab-inactive-surface);
+  display: inline-flex;
+  align-items: stretch;
+  min-width: var(--session-tab-min-width);
+  max-width: var(--session-tab-max-width);
+  min-height: 34px;
+  border: none;
+  background: transparent;
+  position: relative;
+  isolation: isolate;
+  transition: opacity 0.14s ease;
+  flex: 0 1 var(--session-tab-max-width);
+}
+
+.session-tab-shell {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  background: var(--session-tab-surface);
+  box-shadow: inset 0 0 0 1px var(--session-tab-outline);
+  pointer-events: none;
+  transition: background 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+  z-index: 0;
+}
+
+.session-tab:hover {
+  --session-tab-surface: var(--session-tab-hover-surface);
+}
+
+.session-tab.unread-finished:not(.active) .session-tab-shell {
+  animation: session-tab-unread-flash 1.8s ease-in-out infinite;
+}
+
+.session-tab.unread-finished .session-tab-label {
+  font-weight: 600;
+}
+
+.session-tab.active {
+  --session-tab-surface: var(--session-tab-active-surface);
+  z-index: 2;
+}
+
+.session-tab.active .session-tab-shell {
+  box-shadow:
+    inset 0 0 0 1px var(--session-tab-active-outline),
+    var(--session-tab-shadow);
+}
+
+.session-tab.active .session-tab-label {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.session-tab-main,
+.session-tab-close {
+  position: relative;
+  z-index: 1;
+}
+
+.session-tab-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  width: 0;
+  padding: 0 8px 0 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  max-width: 100%;
+  text-align: left;
+  color: inherit;
+}
+
+.session-tab-main:focus-visible {
+  outline: none;
+}
+
+.session-tab:focus-within .session-tab-shell {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--panel-accent) 44%, var(--session-tab-outline)),
+    0 0 0 1px color-mix(in srgb, var(--panel-accent) 18%, transparent);
+}
+
+.session-tab.active:focus-within .session-tab-shell {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--panel-accent) 40%, var(--session-tab-active-outline)),
+    var(--session-tab-shadow),
+    0 0 0 1px color-mix(in srgb, var(--panel-accent) 18%, transparent);
+}
+
+.session-tab-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-align: left;
+  color: color-mix(in srgb, var(--vscode-foreground) 90%, var(--panel-muted) 10%);
+}
+
+.session-tab-run-badge {
+  --run-badge-color: var(--panel-accent);
+  --run-badge-surface: color-mix(in srgb, var(--run-badge-color) 14%, var(--panel-subtle-surface));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 36px;
+  min-height: 20px;
+  margin-right: 2px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--run-badge-color) 34%, var(--panel-border));
+  border-radius: 7px;
+  background: var(--run-badge-surface);
+  color: color-mix(in srgb, var(--run-badge-color) 90%, var(--vscode-foreground));
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.session-tab-run-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--run-badge-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--run-badge-color) 14%, transparent);
+}
+
+.session-tab-run-badge:hover {
+  background: color-mix(in srgb, var(--run-badge-color) 18%, var(--panel-hover-surface));
+  color: var(--vscode-foreground);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--vscode-foreground) 10%, transparent),
+    0 6px 14px -14px var(--run-badge-color);
+}
+
+.session-tab-run-badge:active {
+  transform: translateY(1px);
+}
+
+.session-tab-run-badge.open {
+  --run-badge-color: color-mix(in srgb, var(--panel-success) 78%, black);
+}
+
+.session-tab-run-badge.pending-score {
+  --run-badge-color: var(--panel-warning);
+}
+
+.session-tab-running,
+.session-tab-finished {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-tab-running {
+  background: var(--panel-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--panel-accent) 18%, transparent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.session-tab-finished {
+  background: var(--panel-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--panel-success) 14%, transparent);
+}
+
+.session-tab-close {
+  width: 20px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--panel-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 7px 6px 7px 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.38;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+
+.session-tab:hover .session-tab-close,
+.session-tab:focus-within .session-tab-close,
+.session-tab.active .session-tab-close {
+  opacity: 0.88;
+}
+
+.session-tab-close:hover,
+.session-tab-close:focus-visible {
+  background: var(--panel-hover-surface);
+  border-color: var(--session-tab-outline);
+  color: var(--vscode-foreground);
+  outline: none;
+}
+
+.session-tab-drop-gap {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: stretch;
+  pointer-events: none;
+}
+
+.session-tab-drop-slot {
+  position: absolute;
+  inset: 2px 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel-accent) 32%, var(--panel-border));
+  opacity: 0.95;
+}
+
+.session-tab-drop-marker {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--panel-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--panel-accent) 24%, transparent);
+}
+
+.session-tab-floating {
+  position: fixed;
+  margin-bottom: 0;
+  pointer-events: none;
+  opacity: 0.98;
+  z-index: 10;
+}
+
+.session-tab-floating .session-tab-shell {
+  box-shadow:
+    inset 0 0 0 1px var(--session-tab-active-outline),
+    var(--session-tab-drag-shadow);
+}
+
+.session-tab-floating .session-tab-main,
+.session-tab-floating .session-tab-close {
+  cursor: grabbing;
+}
+
+.session-tab-floating .session-tab-close {
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.session-tabs-new {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--panel-muted);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  align-self: center;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.session-tabs-new:hover:not(:disabled),
+.session-tabs-new:focus-visible:not(:disabled) {
+  background: var(--panel-hover-surface);
+  border-color: var(--panel-border);
+  color: var(--vscode-foreground);
+  outline: none;
+}
+
+.session-tabs-new:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

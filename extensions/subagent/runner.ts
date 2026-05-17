@@ -18,6 +18,7 @@ import {
 import type { AgentConfig } from "./agents.js";
 import { getFinalOutput } from "./formatting.js";
 import type { ThinkingLevel } from "./model-selection.js";
+import { resolveExecutionModel } from "./model-resolution.js";
 import type { OnUpdateCallback, SingleResult, SubagentDetails } from "./types.js";
 import { createInvalidAgentResult } from "./validation.js";
 
@@ -69,53 +70,6 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-/**
- * Resolve an override model id against the registry.
- * Profiles use bare model ids (e.g. "gpt-5.5") that may live under multiple providers
- * (azure-openai-responses, github-copilot). Prefer the caller's provider so subagents
- * route through the same OAuth token (Copilot) when the caller does.
- *
- * Returns diagnostics explaining why resolution failed when the model can't be found.
- */
-function resolveOverrideModel(
-	modelRegistry: ModelRegistry,
-	callerModel: Model<any> | undefined,
-	modelOverride: string,
-	disabledProviders?: Set<string>,
-): { model: Model<any> | undefined; diagnostic?: string } {
-	const isProviderEnabled = (provider: string): boolean => !disabledProviders?.has(provider);
-	const availableModels = modelRegistry.getAvailable();
-	const allModels = modelRegistry.getAll();
-
-	if (callerModel && isProviderEnabled(callerModel.provider)) {
-		const sameProvider = modelRegistry.find(callerModel.provider, modelOverride);
-		if (sameProvider && isProviderEnabled(sameProvider.provider)) return { model: sameProvider };
-	}
-	// Fall back to first available model with matching id across enabled providers.
-	const foundAvailable = availableModels.find((m) => m.id === modelOverride && isProviderEnabled(m.provider));
-	if (foundAvailable) return { model: foundAvailable };
-
-	// Preserve the historical fallback for custom providers that may not expose auth metadata.
-	const found = allModels.find((m) => m.id === modelOverride && isProviderEnabled(m.provider));
-	if (found) return { model: found };
-
-	const disabledMatches = allModels
-		.filter((m) => m.id === modelOverride && !isProviderEnabled(m.provider))
-		.map((m) => m.provider);
-	if (disabledMatches.length > 0) {
-		return {
-			model: undefined,
-			diagnostic: `Model "${modelOverride}" (from model-profiles.json) is only available from disabled provider(s): ${[...new Set(disabledMatches)].join(", ")}. Falling back to caller/default model.`,
-		};
-	}
-
-	const allIds = allModels.map((m) => `${m.provider}/${m.id}`).slice(0, 10).join(", ");
-	return {
-		model: undefined,
-		diagnostic: `Model "${modelOverride}" (from model-profiles.json) not found in registry. Available: ${allIds || "none"}. Falling back to caller/default model.`,
-	};
-}
-
 export async function runSingleAgent(
 	defaultCwd: string,
 	agents: AgentConfig[],
@@ -136,27 +90,22 @@ export async function runSingleAgent(
 	if (!agent) return createInvalidAgentResult(agentName, task, agents, step);
 
 	const sessionCwd = cwd ?? defaultCwd;
-	const effectiveModelString = modelOverride ?? agent.model;
-
-	// Resolve the actual Model<any> to pass to the SDK.
-	const callerProviderEnabled = !callerModel || !disabledProviders?.has(callerModel.provider);
-	let resolvedModel: Model<any> | undefined = callerProviderEnabled ? callerModel : undefined;
-	let modelResolutionDiagnostic: string | undefined;
-	if (modelOverride) {
-		const resolved = resolveOverrideModel(modelRegistry, callerModel, modelOverride, disabledProviders);
-		resolvedModel = resolved.model ?? (callerProviderEnabled ? callerModel : undefined);
-		modelResolutionDiagnostic = resolved.diagnostic;
-	}
+	const requestedModel = modelOverride ?? agent.model;
+	const {
+		resolvedModel,
+		actualModelId,
+		diagnostic: modelResolutionDiagnostic,
+	} = resolveExecutionModel(modelRegistry, callerModel, requestedModel, disabledProviders);
 
 	const currentResult: SingleResult = {
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1,
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: effectiveModelString,
+		model: actualModelId,
 		step,
 	};
 
@@ -165,10 +114,16 @@ export async function runSingleAgent(
 		currentResult.modelResolutionDiagnostic = modelResolutionDiagnostic;
 	}
 
+	/** Streaming text accumulated from `message_update` text_delta events. */
+	let streamingText = "";
+
 	const emitUpdate = () => {
 		if (!onUpdate) return;
+		// Prefer the final output from completed messages; fall back to in-flight streaming text.
+		const finalOutput = getFinalOutput(currentResult.messages);
+		const text = finalOutput || streamingText || "(running...)";
 		onUpdate({
-			content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
+			content: [{ type: "text", text }],
 			details: makeDetails([currentResult]),
 		});
 	};
@@ -195,12 +150,24 @@ export async function runSingleAgent(
 	});
 
 	// Capture the model the session actually selected (in case our hint was overridden).
-	if (!currentResult.model && session.agent?.state?.model) {
+	if (session.agent?.state?.model) {
 		const m = session.agent.state.model;
-		currentResult.model = `${m.provider}/${m.id}`;
+		currentResult.model = m.id;
 	}
 
 	const unsubscribe = session.subscribe((event) => {
+		if (event.type === "message_update") {
+			// Accumulate streaming text deltas so the user sees output as it arrives.
+			// The SDK delivers events in order per message: message_start → message_update* → message_end.
+			// A single `streamingText` buffer is sufficient because only one assistant
+			// message streams at a time in the subagent's single-prompt session.
+			if (event.assistantMessageEvent?.type === "text_delta" && event.assistantMessageEvent.delta) {
+				streamingText += event.assistantMessageEvent.delta;
+				currentResult.streamingText = streamingText;
+				emitUpdate();
+			}
+			return;
+		}
 		if (event.type === "tool_execution_start" && event.toolName) {
 			currentResult.runningTools = [...(currentResult.runningTools ?? []), event.toolName];
 			emitUpdate();
@@ -227,9 +194,15 @@ export async function runSingleAgent(
 					currentResult.usage.cost += usage.cost?.total || 0;
 					currentResult.usage.contextTokens = usage.totalTokens || 0;
 				}
-				if (!currentResult.model && (msg as any).model) currentResult.model = (msg as any).model;
+				if ((msg as any).model) currentResult.model = (msg as any).model;
 				if ((msg as any).stopReason) currentResult.stopReason = (msg as any).stopReason;
 				if ((msg as any).errorMessage) currentResult.errorMessage = (msg as any).errorMessage;
+			}
+			// Clear streaming text once a complete assistant message is committed.
+			// (Only assistant messages produce text_delta events, so only reset on those.)
+			if (msg.role === "assistant") {
+				streamingText = "";
+				currentResult.streamingText = undefined;
 			}
 			emitUpdate();
 		}
@@ -273,6 +246,7 @@ export async function runSingleAgent(
 			currentResult.exitCode = 1;
 			currentResult.stopReason = "timeout";
 			currentResult.errorMessage = `Subagent timed out after ${SUBAGENT_PROMPT_TIMEOUT_MS / 1000}s waiting for model response.`;
+			currentResult.streamingText = undefined;
 			return currentResult;
 		}
 
@@ -282,6 +256,7 @@ export async function runSingleAgent(
 		} else {
 			currentResult.exitCode = 0;
 		}
+		currentResult.streamingText = undefined;
 		if (signal?.aborted && currentResult.exitCode === 0) {
 			currentResult.exitCode = 1;
 			if (!currentResult.errorMessage) currentResult.errorMessage = "Subagent was aborted";
@@ -292,6 +267,7 @@ export async function runSingleAgent(
 		const message = err instanceof Error ? err.message : String(err);
 		currentResult.errorMessage = currentResult.errorMessage || message;
 		currentResult.stderr = currentResult.stderr || message;
+		currentResult.streamingText = undefined;
 		return currentResult;
 	} finally {
 		try {

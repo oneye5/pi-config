@@ -13,6 +13,7 @@ function looksLikeWindowsPath(filePath: string): boolean {
 }
 
 export function normalizeContextFilePath(filePath: string): string {
+  if (typeof filePath !== 'string') return '';
   const trimmed = filePath.trim();
   if (!trimmed) {
     return '';

@@ -3,7 +3,7 @@
 
 import { useState } from 'preact/hooks';
 
-import type { SystemPromptEntry } from '../../shared/protocol';
+import type { PruningResult, SystemPromptEntry } from '../../shared/protocol';
 import { renderMarkdown, reasoningSummary } from './markdown';
 import {
   estimateSystemPromptTokens,
@@ -11,6 +11,7 @@ import {
   getSystemPromptTokenEstimateTitle,
 } from './system-prompt-tokens';
 import { ToolCallHeader } from './transcript/tool-call-card';
+import { PruningBanner } from './pruning-banner';
 
 interface SystemPromptCardProps {
   prompt: SystemPromptEntry;
@@ -72,10 +73,11 @@ function SystemPromptCard({ prompt }: SystemPromptCardProps) {
 
 interface SystemPromptMessageProps {
   prompts: SystemPromptEntry[];
+  pruningResult?: PruningResult | null;
 }
 
-export function SystemPromptMessage({ prompts }: SystemPromptMessageProps) {
-  if (prompts.length === 0) {
+export function SystemPromptMessage({ prompts, pruningResult }: SystemPromptMessageProps) {
+  if (prompts.length === 0 && !pruningResult) {
     return null;
   }
 
@@ -93,21 +95,38 @@ export function SystemPromptMessage({ prompts }: SystemPromptMessageProps) {
       data-role="assistant"
       data-scroll-anchor-id="system-prompts"
     >
-      <div class="message-head">
-        <div class="message-head-main">
-          <span class="message-role">PI</span>
-          <span class="message-time">System prompts</span>
-          {tokenLabel && <span class="message-duration" title={tokenTitle}>{tokenLabel}</span>}
+      {pruningResult && prompts.length === 0 && (
+        <div class="pruning-banner-wrapper">
+          <PruningBanner pruningResult={pruningResult} />
         </div>
-      </div>
-      <div class="tool-call-list">
-        {prompts.map((prompt, index) => (
-          <SystemPromptCard
-            key={`${prompt.source}:${prompt.title}:${prompt.summary}:${index}`}
-            prompt={prompt}
-          />
-        ))}
-      </div>
+      )}
+      {prompts.length > 0 && (
+        <>
+          <div class="message-head">
+            <div class="message-head-main">
+              <span class="message-role">PI</span>
+              <span class="message-time">System prompts</span>
+              {pruningResult && (
+                <span
+                  class="system-prompts-edited"
+                  title={`Pruned by skill-pruner: ${pruningResult.skillsTotal - pruningResult.skillsKept} skills, ${pruningResult.toolsTotal - pruningResult.toolsKept} tools removed${pruningResult.tokensSaved > 0 ? ` (~${pruningResult.tokensSaved} tokens saved)` : ''}`}
+                >
+                  ✂ edited
+                </span>
+              )}
+              {tokenLabel && <span class="message-duration" title={tokenTitle}>{tokenLabel}</span>}
+            </div>
+          </div>
+          <div class="tool-call-list">
+            {prompts.map((prompt, index) => (
+              <SystemPromptCard
+                key={`${prompt.source}:${prompt.title}:${prompt.summary}:${index}`}
+                prompt={prompt}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

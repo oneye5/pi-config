@@ -14,6 +14,7 @@ import type {
   ExtensionInfo,
   ModelInfo,
   ModelSettings,
+  PruningSettings,
   SystemPromptEntry,
   ThinkingLevel,
   TranscriptWindow,
@@ -52,6 +53,7 @@ interface ComposerProps {
   availableExtensions: ExtensionInfo[];
   contextUsage: ContextWindowUsage | null;
   prefs: ChatPrefs;
+  pruningSettings: PruningSettings;
   systemPrompts: SystemPromptEntry[];
   transcript: ChatMessage[];
   transcriptWindow: TranscriptWindow;
@@ -66,6 +68,7 @@ interface ComposerProps {
   onRemoveInput: (inputId: string) => void;
   onModelChange: (model: string, thinkingLevel: ThinkingLevel) => void;
   onSetPrefs: (prefs: Partial<ChatPrefs>) => void;
+  onSetPruningSettings: (settings: Partial<PruningSettings>) => void;
   onMarkComplete?: () => void;
 }
 
@@ -79,6 +82,7 @@ function ComposerView({
   availableExtensions,
   contextUsage,
   prefs,
+  pruningSettings,
   systemPrompts,
   transcript,
   transcriptWindow,
@@ -93,6 +97,7 @@ function ComposerView({
   onRemoveInput,
   onModelChange,
   onSetPrefs,
+  onSetPruningSettings,
   onMarkComplete,
 }: ComposerProps) {
   const [text, setText] = useState('');
@@ -323,7 +328,9 @@ function ComposerView({
     <div class="composer-area" ref={composerAreaRef}>
       <ComposerToolbar
         prefs={prefs}
+        pruningSettings={pruningSettings}
         onSetPrefs={onSetPrefs}
+        onSetPruningSettings={onSetPruningSettings}
         availableExtensions={availableExtensions}
         availableModels={availableModels}
         selectedModel={selectedModel}

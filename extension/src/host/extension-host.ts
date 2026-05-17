@@ -25,7 +25,7 @@ import {
   type SessionCompletionEvent,
 } from './completion-notification';
 import { type RunAnalyticsExportPayload } from './run-analytics-query';
-import { fileChangesActions, selectActiveSessionPath, selectViewState, store } from './store';
+import { fileChangesActions, selectActiveSessionPath, selectViewState, store, uiActions } from './store';
 import { SidebarViewProvider } from './sidebar-provider';
 import { SessionService } from './session-service';
 import { StatsService } from './stats-service';
@@ -420,24 +420,43 @@ export class PieExtension implements vscode.Disposable {
         return;
 
       case 'send': {
+        const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath : null;
         const text = typeof msg.text === 'string' ? msg.text : '';
-        const hasPendingInputs = selectViewState(store.getState()).pendingComposerInputs.length > 0;
+        if (!sessionPath) {
+          store.dispatch(uiActions.setNotice('Protocol defect: send arrived without a sessionPath.'));
+          this.scheduleRender();
+          return;
+        }
+        const hasPendingInputs = (store.getState().sessionState.pendingComposerInputsBySession[sessionPath] ?? []).length > 0;
         if (text.trim() || hasPendingInputs) {
-          await this.service.send(text);
+          await this.service.send(sessionPath, text);
         }
         return;
       }
 
       case 'editMessage': {
+        const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath : null;
         const text = typeof msg.text === 'string' ? msg.text : '';
         const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-        if (text.trim() && messageId) await this.service.editMessage(messageId, text);
+        if (!sessionPath) {
+          store.dispatch(uiActions.setNotice('Protocol defect: editMessage arrived without a sessionPath.'));
+          this.scheduleRender();
+          return;
+        }
+        if (text.trim() && messageId) await this.service.editMessage(sessionPath, messageId, text);
         return;
       }
 
-      case 'interrupt':
-        await this.service.interrupt();
+      case 'interrupt': {
+        const sessionPath = typeof msg.sessionPath === 'string' ? msg.sessionPath : null;
+        if (!sessionPath) {
+          store.dispatch(uiActions.setNotice('Protocol defect: interrupt arrived without a sessionPath.'));
+          this.scheduleRender();
+          return;
+        }
+        await this.service.interrupt(sessionPath);
         return;
+      }
 
       case 'openFilePicker': {
         const uris = await vscode.window.showOpenDialog({
@@ -525,6 +544,11 @@ export class PieExtension implements vscode.Disposable {
       case 'setPrefs':
         this.service.setPrefs(msg.prefs);
         this.sidebarProvider.postState();
+        return;
+
+      case 'setPruningSettings':
+        await this.service.setPruningSettings(msg.settings);
+        this.scheduleRender();
         return;
 
       default:

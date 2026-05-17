@@ -102,6 +102,52 @@ test('busy session.opened drops an optimistic local user row already persisted u
   assert.equal(result.transcriptWindow.loadedEnd, 2);
 });
 
+test('busy session.opened deduplicates optimistic image prompts despite metadata drift', () => {
+  const localTranscript = [
+    userMessage('user-1', 'Earlier prompt'),
+    {
+      ...userMessage('local:send:1', 'Inspect this screenshot'),
+      userParts: [
+        { kind: 'text' as const, text: 'Inspect this screenshot' },
+        {
+          kind: 'image' as const,
+          mimeType: 'image/png',
+          dataBase64: 'ZmFrZQ==',
+          name: 'image.png',
+          width: 1600,
+          height: 900,
+        },
+      ],
+    },
+  ];
+  const incomingTranscript = [
+    userMessage('user-1', 'Earlier prompt'),
+    {
+      ...userMessage('user-2', 'Inspect this screenshot'),
+      userParts: [
+        { kind: 'text' as const, text: 'Inspect this screenshot' },
+        {
+          kind: 'image' as const,
+          mimeType: 'image/png',
+          dataBase64: 'ZmFrZQ==',
+        },
+      ],
+    },
+  ];
+
+  const result = resolveSessionOpenedTranscript({
+    busy: true,
+    localTranscript,
+    incomingTranscript,
+    incomingTranscriptWindow: window({ totalCount: 2, loadedEnd: 2 }),
+  });
+
+  assert.equal(result.preserveLocal, true);
+  assert.deepEqual(result.transcript, incomingTranscript);
+  assert.equal(result.transcriptWindow.totalCount, 2);
+  assert.equal(result.transcriptWindow.loadedEnd, 2);
+});
+
 test('busy session.opened keeps repeated optimistic user text when the current send is not persisted', () => {
   const localTranscript = [
     userMessage('user-1', 'Repeat'),
@@ -149,6 +195,78 @@ test('busy session.opened keeps local streaming rows while adopting incoming lat
   assert.deepEqual(result.transcript.map((message) => message.id), ['assistant-5', 'req-1:1']);
   assert.equal(result.transcriptWindow.hasNewer, false);
   assert.equal(result.transcriptWindow.loadedEnd, 6);
+});
+
+test('busy session.opened preserves messages with running tool calls', () => {
+  const localTranscript = [
+    userMessage('user-1', 'Prompt'),
+    {
+      ...assistantMessage('req-1:1', 'I will run a subagent', 'completed'),
+      toolCalls: [{
+        id: 'tc-1',
+        name: 'subagent',
+        input: { prompt: 'do something' },
+        result: { streamingText: 'partial result...' },
+        status: 'running' as const,
+      }],
+    },
+  ];
+  const incomingTranscript = [
+    userMessage('user-1', 'Prompt'),
+    {
+      ...assistantMessage('req-1:1', 'I will run a subagent', 'completed'),
+      toolCalls: [],
+    },
+  ];
+
+  const result = resolveSessionOpenedTranscript({
+    busy: true,
+    localTranscript,
+    incomingTranscript,
+    incomingTranscriptWindow: window({ totalCount: 2, loadedEnd: 2 }),
+  });
+
+  assert.equal(result.preserveLocal, true);
+  // Local message with running tool call should replace incoming message
+  assert.equal(result.transcript.length, 2);
+  assert.equal(result.transcript[1].id, 'req-1:1');
+  assert.equal(result.transcript[1].toolCalls?.length, 1);
+  assert.equal(result.transcript[1].toolCalls?.[0].status, 'running');
+  assert.equal(result.transcript[1].toolCalls?.[0].result?.streamingText, 'partial result...');
+});
+
+test('idle session.opened drops messages with running tool calls (no preserve)', () => {
+  const localTranscript = [
+    userMessage('user-1', 'Prompt'),
+    {
+      ...assistantMessage('req-1:1', 'I will run a subagent', 'completed'),
+      toolCalls: [{
+        id: 'tc-1',
+        name: 'subagent',
+        input: { prompt: 'do something' },
+        result: { streamingText: 'partial result...' },
+        status: 'running' as const,
+      }],
+    },
+  ];
+  const incomingTranscript = [
+    userMessage('user-1', 'Prompt'),
+    {
+      ...assistantMessage('req-1:1', 'I will run a subagent', 'completed'),
+      toolCalls: [],
+    },
+  ];
+
+  const result = resolveSessionOpenedTranscript({
+    busy: false,
+    localTranscript,
+    incomingTranscript,
+    incomingTranscriptWindow: window({ totalCount: 2, loadedEnd: 2 }),
+  });
+
+  // When not busy, incoming transcript should replace local, even if local has running tool calls
+  assert.equal(result.preserveLocal, false);
+  assert.deepEqual(result.transcript, incomingTranscript);
 });
 
 test('idle session.opened prefers the incoming transcript', () => {

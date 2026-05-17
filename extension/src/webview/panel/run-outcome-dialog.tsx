@@ -5,6 +5,14 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 
 import type { RunOutcome, RunOutcomeResolution } from '../../shared/protocol';
 
+const RATING_HINTS: Record<number, { label: string; hint: string }> = {
+  1: { label: '1', hint: 'Set back' },
+  2: { label: '2', hint: 'Poor' },
+  3: { label: '3', hint: 'Average' },
+  4: { label: '4', hint: 'Good' },
+  5: { label: '5', hint: 'Exceptional' },
+};
+
 const RESOLUTION_OPTIONS: Array<{
   value: RunOutcomeResolution;
   label: string;
@@ -77,19 +85,22 @@ export function RunOutcomeDialog({ sessionLabel, onCancel, onSubmit }: RunOutcom
         <div class="run-outcome-section">
           <div class="run-outcome-section-title">Rating</div>
           <div class="run-outcome-rating-grid" role="radiogroup" aria-label="Run rating">
-            {[1, 2, 3, 4, 5].map((value) => (
-              <button
-                key={value}
-                class={`run-outcome-rating${satisfaction === value ? ' selected' : ''}`}
-                type="button"
-                role="radio"
-                aria-checked={satisfaction === value}
-                onClick={() => setSatisfaction(value)}
-              >
-                <span class="run-outcome-rating-value">{value}</span>
-                <span class="run-outcome-rating-scale">/5</span>
-              </button>
-            ))}
+            {[1, 2, 3, 4, 5].map((value) => {
+              const { hint } = RATING_HINTS[value];
+              return (
+                <button
+                  key={value}
+                  class={`run-outcome-rating r${value}${satisfaction === value ? ' selected' : ''}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={satisfaction === value}
+                  onClick={() => setSatisfaction(value)}
+                >
+                  <span class="run-outcome-rating-value">{value}<span class="run-outcome-rating-scale">/5</span></span>
+                  <span class="run-outcome-rating-hint">{hint}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

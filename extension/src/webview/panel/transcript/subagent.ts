@@ -36,6 +36,7 @@ export interface SubagentSingleResult {
   /** `-1` while the subagent is still running. */
   exitCode: number;
   messages: RawMessage[];
+  /** The model the subagent session actually ran with. */
   model?: string;
   stderr?: string;
   stopReason?: string;
@@ -52,6 +53,8 @@ export interface SubagentSingleResult {
   selectionPool?: string[];
   /** Fit scores for each pool candidate. */
   selectionFitScores?: number[];
+  /** Streaming text from the current in-progress assistant turn. */
+  streamingText?: string;
 }
 
 export interface SubagentResult {
@@ -234,7 +237,7 @@ function subagentSingleResultFallbackMarkdown(result: SubagentSingleResult): str
   return detail ? `${failureLabel}: ${detail}` : `${failureLabel}: agent failed before producing any output.`;
 }
 
-function placeholderSingleResult(agent: unknown, task: unknown): SubagentSingleResult | undefined {
+function placeholderSingleResult(agent: unknown, task: unknown, taskScores?: unknown): SubagentSingleResult | undefined {
   const agentName = typeof agent === 'string' ? agent.trim() : '';
   const taskText = typeof task === 'string' ? task.trim() : '';
   if (!agentName || !taskText) {
@@ -246,6 +249,7 @@ function placeholderSingleResult(agent: unknown, task: unknown): SubagentSingleR
     task: taskText,
     exitCode: -1,
     messages: [],
+    ...(isRecord(taskScores) ? { taskScores: taskScores as Record<string, number> } : {}),
   };
 }
 
@@ -254,7 +258,7 @@ function synthesizeRenderableSubagentResult(input: unknown): SubagentResult | un
     return undefined;
   }
 
-  const single = placeholderSingleResult(input.agent, input.task);
+  const single = placeholderSingleResult(input.agent, input.task, input.taskScores);
   if (single) {
     return {
       mode: 'single',
@@ -264,7 +268,7 @@ function synthesizeRenderableSubagentResult(input: unknown): SubagentResult | un
 
   if (Array.isArray(input.tasks)) {
     const results = input.tasks
-      .map((task) => (isRecord(task) ? placeholderSingleResult(task.agent, task.task) : undefined))
+      .map((task) => (isRecord(task) ? placeholderSingleResult(task.agent, task.task, task.taskScores ?? input.taskScores) : undefined))
       .filter((task): task is SubagentSingleResult => Boolean(task));
 
     if (results.length > 0) {
@@ -277,7 +281,7 @@ function synthesizeRenderableSubagentResult(input: unknown): SubagentResult | un
 
   if (Array.isArray(input.chain) && input.chain.length > 0) {
     const firstStep = input.chain[0];
-    const result = isRecord(firstStep) ? placeholderSingleResult(firstStep.agent, firstStep.task) : undefined;
+    const result = isRecord(firstStep) ? placeholderSingleResult(firstStep.agent, firstStep.task, firstStep.taskScores ?? input.taskScores) : undefined;
     if (result) {
       return {
         mode: 'chain',
@@ -373,7 +377,18 @@ export function subagentSingleResultToChatMessages(result: SubagentSingleResult,
   }
 
   if (isSubagentSingleResultRunning(result)) {
-    return taskMessage ? [taskMessage] : [];
+    const msgs = taskMessage ? [taskMessage] : [];
+    const streamText = result.streamingText?.trim();
+    if (streamText) {
+      msgs.push({
+        id: `${idPrefix}-streaming`,
+        role: 'assistant',
+        createdAt: '',
+        markdown: streamText,
+        status: 'streaming',
+      });
+    }
+    return msgs;
   }
 
   return [
@@ -384,7 +399,6 @@ export function subagentSingleResultToChatMessages(result: SubagentSingleResult,
       createdAt: '',
       markdown: subagentSingleResultFallbackMarkdown(result),
       status: isSubagentSingleResultFailed(result) ? 'error' : 'completed',
-      ...(result.model ? { modelId: result.model } : {}),
     },
   ];
 }

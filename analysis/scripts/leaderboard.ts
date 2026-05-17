@@ -6,11 +6,13 @@ import {
   type ModelLeaderboardRow,
   type LeaderboardDimension,
 } from './contracts.ts';
+import {
+  LEADERBOARD_MINIMUM_SCORED_RUNS as MINIMUM_SCORED_RUNS,
+  LEADERBOARD_TARGET_SAMPLE as TARGET_SAMPLE,
+  LEADERBOARD_TOKEN_EFFICIENCY_MAX as TOKEN_EFFICIENCY_MAX,
+  LEADERBOARD_WEIGHTS as WEIGHTS,
+} from './leaderboard-scoring.ts';
 
-const MINIMUM_SCORED_RUNS = 3;
-const TARGET_SAMPLE = 10;
-const TOKEN_EFFICIENCY_MAX = 50;
-const WEIGHTS = { satisfaction: 0.35, resolutionRate: 0.30, firstAttemptSuccess: 0.15, toolReliability: 0.10, verificationAdoption: 0.05, tokenEfficiency: 0.05 } as const;
 const T_CRITICAL_95: Record<number, number> = {
   1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
   11: 2.201, 12: 2.179, 13: 2.16, 14: 2.145, 15: 2.131, 16: 2.12, 17: 2.11, 18: 2.101, 19: 2.093, 20: 2.086,
@@ -168,11 +170,11 @@ export function createModelLeaderboard(prepared: PreparedAnalyticsData): ModelLe
     weights: WEIGHTS,
     minimumScoredRuns: MINIMUM_SCORED_RUNS,
     notes: [
-      'Composite scores use conservative lower bounds of 95% confidence intervals, then apply a sample-size reliability penalty (scoredRunCount / 10, max 1.0).',
-      'Models with 10+ scored runs receive full composite weight; fewer runs are penalized proportionally (e.g., 5 runs → 0.5 factor).',
+      `Composite scores use conservative lower bounds of 95% confidence intervals, then apply a sample-size reliability penalty (scoredRunCount / ${TARGET_SAMPLE}, max 1.0).`,
+      `Models with ${TARGET_SAMPLE}+ scored runs receive full composite weight; fewer runs are penalized proportionally (e.g., 5 runs → 0.5 factor).`,
       'All dimensions (including firstAttemptSuccess, toolReliability, verificationAdoption, and tokenEfficiency) use only scored runs for consistent population.',
-      'Token efficiency (output tokens per mutation line) is a scoring dimension weighted at 0.05; lower values (fewer tokens per line = more efficient) score higher via inverted normalization (1 - value/50).',
-      'Models with fewer than 3 scored runs are shown but unranked (null composite and rank).',
+      `Token efficiency (output tokens per mutation line) is a scoring dimension weighted at ${WEIGHTS.tokenEfficiency.toFixed(2)}; lower values (fewer tokens per line = more efficient) score higher via inverted normalization (1 - value/${TOKEN_EFFICIENCY_MAX}).`,
+      `Models with fewer than ${MINIMUM_SCORED_RUNS} scored runs are shown but unranked (null composite and rank).`,
       'Subagent context shows co-occurrence; subagent model attribution requires pipeline enhancement.',
     ],
   };

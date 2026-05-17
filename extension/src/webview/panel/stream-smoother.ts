@@ -2,11 +2,20 @@ import type { PatchOp } from '../../shared/protocol';
 import { emptyOverlay, applyPatch } from './overlay';
 import type { Overlay } from './overlay';
 
+/**
+ * Narrow sink interface for per-message signal routing.
+ * Called with the committed PatchOp after smoothing. The sink is responsible
+ * for writing into the appropriate per-message signal.
+ */
+export interface StreamSmootherPatchSink {
+  commit(op: PatchOp): void;
+}
+
 /** Configuration for stream smoothing. */
 export interface StreamSmootherConfig {
   /**
-   * Minimum time each character takes to display, in milliseconds.
-   * Lower values = faster streaming. Default: 50ms (20 chars/sec)
+   * Approximate cadence of visible text updates, in milliseconds.
+   * Lower values = faster streaming. Default: 50ms.
    */
   charDisplayMs: number;
   /**
@@ -21,7 +30,7 @@ export interface StreamSmootherConfig {
   maxEmitBatch: number;
   /**
    * Minimum delay between emit batches, in milliseconds.
-   * Prevents batching up too fast. Default: 20ms (approx 50 batches/sec at max)
+   * Acts as a hard floor for the update cadence. Default: 20ms.
    */
   minEmitIntervalMs: number;
 }
@@ -58,11 +67,13 @@ export class StreamSmoother {
   private readonly config: StreamSmootherConfig;
   private readonly state: StreamSmootherState;
   private readonly onFlush: (overlay: Overlay) => void;
+  private readonly patchSink: StreamSmootherPatchSink | null;
   private overlay: Overlay;
 
   constructor(
     config: Partial<StreamSmootherConfig>,
     onFlush: (overlay: Overlay) => void,
+    patchSink?: StreamSmootherPatchSink,
   ) {
     this.config = { ...DEFAULT_STREAM_SMOOTHER_CONFIG, ...config };
     this.state = {
@@ -71,6 +82,7 @@ export class StreamSmoother {
     };
     this.overlay = emptyOverlay();
     this.onFlush = onFlush;
+    this.patchSink = patchSink ?? null;
   }
 
   /**
@@ -81,6 +93,7 @@ export class StreamSmoother {
       // Non-delta patches are applied immediately
       this.overlay = applyPatch(this.overlay, op);
       this.onFlush(this.overlay);
+      this.patchSink?.commit(op);
       return this.overlay;
     }
 
@@ -91,31 +104,19 @@ export class StreamSmoother {
     if (deltaLength < this.config.minCharsForSmoothing) {
       this.overlay = applyPatch(this.overlay, op);
       this.onFlush(this.overlay);
+      this.patchSink?.commit(op);
       return this.overlay;
     }
 
-    // Buffer for smooth streaming
+    // Buffer for smooth streaming.
+    // Important: do not reset an already-scheduled emit timer here. If deltas
+    // arrive faster than the timer interval, resetting the timer on every patch
+    // starves emission and makes streaming appear frozen until a later flush.
     this.state.pendingDeltas.push({
       messageId: op.messageId,
       delta,
     });
-
-    // Cancel any existing timer to avoid multiple timers
-    if (this.state.emitTimer !== null) {
-      clearTimeout(this.state.emitTimer);
-      this.state.emitTimer = null;
-    }
-
-    // Schedule emit - delay based on batch size and display time
-    const emitDelayMs = Math.max(
-      this.config.minEmitIntervalMs,
-      Math.round((this.config.maxEmitBatch * this.config.charDisplayMs) / this.config.minEmitIntervalMs),
-    );
-
-    this.state.emitTimer = setTimeout(() => {
-      this.state.emitTimer = null;
-      this.emitSmoothedBatch();
-    }, emitDelayMs);
+    this.scheduleEmit();
 
     return this.overlay;
   }
@@ -158,26 +159,36 @@ export class StreamSmoother {
 
     // Apply all emitted deltas
     for (const emitted of emittedDeltas) {
-      this.overlay = applyPatch(this.overlay, {
+      const op: PatchOp = {
         kind: 'messageDelta',
         messageId: emitted.messageId,
         delta: emitted.delta,
-      });
+      };
+      this.overlay = applyPatch(this.overlay, op);
+      this.patchSink?.commit(op);
     }
     this.onFlush(this.overlay);
 
-    // If there's more to emit, schedule the next batch
-    if (this.state.pendingDeltas.length > 0) {
-      const nextBatchDelay = Math.max(
-        this.config.minEmitIntervalMs,
-        Math.round((this.config.maxEmitBatch * this.config.charDisplayMs) / this.config.minEmitIntervalMs),
-      );
+    // If there's more to emit, keep draining at the configured cadence.
+    this.scheduleEmit();
+  }
 
-      this.state.emitTimer = setTimeout(() => {
-        this.state.emitTimer = null;
-        this.emitSmoothedBatch();
-      }, nextBatchDelay);
+  private scheduleEmit(): void {
+    if (this.state.emitTimer !== null || this.state.pendingDeltas.length === 0) {
+      return;
     }
+
+    this.state.emitTimer = setTimeout(() => {
+      this.state.emitTimer = null;
+      this.emitSmoothedBatch();
+    }, this.getEmitDelayMs());
+  }
+
+  private getEmitDelayMs(): number {
+    return Math.max(
+      this.config.minEmitIntervalMs,
+      Math.round(this.config.charDisplayMs),
+    );
   }
 
   /**
@@ -194,11 +205,13 @@ export class StreamSmoother {
     }
 
     for (const pending of this.state.pendingDeltas) {
-      this.overlay = applyPatch(this.overlay, {
+      const op: PatchOp = {
         kind: 'messageDelta',
         messageId: pending.messageId,
         delta: pending.delta,
-      });
+      };
+      this.overlay = applyPatch(this.overlay, op);
+      this.patchSink?.commit(op);
     }
     this.state.pendingDeltas = [];
     this.onFlush(this.overlay);

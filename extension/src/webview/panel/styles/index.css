@@ -1,0 +1,12 @@
+/* CSS shards — plain concatenation (no @layer to avoid conflicts with
+   VS Code's unlayered webview styles overriding our rules). */
+@import './tokens.css';
+@import './tabs.css';
+@import './layout.css';
+@import './transcript.css';
+@import './inline-editor.css';
+@import './tool-call.css';
+@import './composer.css';
+@import './context-menu.css';
+@import './file-changes.css';
+@import './pruning-banner.css';

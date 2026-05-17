@@ -43,6 +43,7 @@ export interface SessionEntryLike {
   customType?: string;
   display?: boolean;
   content?: unknown;
+  details?: unknown;
 }
 
 export function summarizeSession(info: SessionInfoLike, modelId?: string): SessionSummary {
@@ -220,6 +221,26 @@ export function mapTranscript(entries: SessionEntryLike[]): ChatMessage[] {
         currentAssistant = undefined;
       }
 
+      continue;
+    }
+
+    // Custom-type entries (e.g. pruning-result) from pi.sendMessage() — stored with type 'custom_message'.
+    if ((entry.type === 'custom_message' || entry.type === 'custom') && entry.display !== false && entry.content) {
+      const msg = systemMessage(
+        entry.id,
+        new Date(entry.timestamp).toISOString(),
+        typeof entry.content === 'string'
+          ? entry.content
+          : String(entry.content),
+      );
+      if (entry.customType) {
+        msg.customType = entry.customType;
+      }
+      if ((entry as { details?: unknown }).details !== undefined) {
+        msg.customDetails = (entry as { details?: unknown }).details;
+      }
+      transcript.push(msg);
+      currentAssistant = undefined;
       continue;
     }
 

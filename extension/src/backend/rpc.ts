@@ -1,4 +1,7 @@
 import type { ComposerInput, ModelSettings, ThinkingLevel, TranscriptPageDirection } from '../shared/protocol';
+import { ALLOWED_IMAGE_MIME_TYPES, MAX_IMAGE_INPUT_BYTES } from '../shared/image-constraints';
+
+export { MAX_IMAGE_INPUT_BYTES } from '../shared/image-constraints';
 
 // ─── Argument parsing ────────────────────────────────────────────────────────
 
@@ -66,14 +69,7 @@ const THINKING_LEVELS: ReadonlyArray<ThinkingLevel> = [
   'xhigh',
 ];
 
-export const MAX_IMAGE_INPUT_BYTES = 10 * 1024 * 1024;
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/gif',
-]);
+
 
 function isObj(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';

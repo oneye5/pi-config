@@ -1,0 +1,508 @@
+﻿.thinking-block {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  overflow: hidden;
+  opacity: 0.8;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-block:hover {
+  opacity: 0.92;
+}
+
+.tool-call {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--panel-raised-surface);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-call.tool-call-variant-skill-load {
+  border-color: var(--panel-skill-border);
+  background: var(--panel-skill-surface);
+}
+
+.thinking-block-header,
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.thinking-block-header {
+  padding: 4px 6px;
+  border-radius: 6px 6px 0 0;
+}
+
+.thinking-block:hover,
+.tool-call:hover {
+  background: var(--panel-subtle-surface);
+}
+
+.tool-call.tool-call-variant-skill-load:hover {
+  background: var(--panel-hover-surface);
+}
+
+.thinking-block:hover .thinking-block-header,
+.tool-call:hover .tool-call-header {
+  background: transparent;
+}
+
+.tool-call.tool-call-subagent[aria-expanded="false"] .subagent-header {
+  background: var(--panel-subagent-header-surface);
+  box-shadow: inset 0 0 0 1px var(--panel-subagent-header-border);
+  border-radius: 6px;
+}
+
+.tool-call.tool-call-subagent[aria-expanded="false"]:hover .subagent-header {
+  background: var(--panel-subagent-header-surface-hover);
+}
+
+.thinking-block:focus-visible,
+.tool-call:focus-visible {
+  outline: 1px solid var(--panel-accent);
+  outline-offset: 2px;
+}
+
+.thinking-block-body {
+  user-select: text;
+}
+
+.tool-call-body {
+  user-select: text;
+}
+
+.thinking-block-chevron {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  color: var(--panel-muted);
+  display: block;
+}
+
+.thinking-block-chevron.open {
+  transform: rotate(90deg);
+}
+
+.thinking-block-label,
+.tool-call-section-label {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--panel-muted);
+}
+
+.thinking-block-label {
+  color: var(--vscode-foreground);
+  opacity: 0.72;
+}
+
+.thinking-block-summary {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+}
+
+.thinking-block-body,
+.tool-call-body {
+  padding: 0 10px 10px;
+}
+
+.thinking-block-body {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.tool-call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.system-prompts-message .message-head {
+  margin-bottom: 6px;
+}
+
+.tool-call.running {
+  border-color: var(--panel-border);
+}
+
+.tool-call.failed {
+  border-color: rgba(255, 50, 50, 0.18);
+}
+
+.tool-call.completed {
+  border-color: var(--panel-border);
+}
+
+.tool-call-heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-call-heading.with-summary,
+.tool-call-heading.with-size-hint {
+  gap: 6px;
+}
+
+.tool-call-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tool-call-name.with-summary {
+  /* Allow the name to expand within the row; the summary is capped and
+     allowed to shrink first so the title stays readable. */
+  max-width: none;
+}
+
+/* ── Subagent header ─────────────────────────────────────── */
+
+.subagent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.subagent-header-summary {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--panel-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+
+.subagent-agent-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+}
+
+.subagent-primary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* Score bar: compact inline score dimensions */
+.subagent-scores {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+}
+
+.subagent-score-dim {
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  transition: opacity 0.15s ease;
+}
+
+.subagent-score-dim[data-score="0"] { opacity: 0.25; color: var(--panel-muted); }
+.subagent-score-dim[data-score="1"] { opacity: 0.4; color: var(--panel-muted); }
+.subagent-score-dim[data-score="2"] { opacity: 0.55; color: var(--vscode-foreground); }
+.subagent-score-dim[data-score="3"] { opacity: 0.7; color: var(--vscode-foreground); }
+.subagent-score-dim[data-score="4"] { opacity: 0.85; color: var(--panel-accent); }
+.subagent-score-dim[data-score="5"] { opacity: 1.0; color: var(--panel-accent); font-weight: 700; }
+
+/* Status indicator */
+.subagent-status {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+
+.subagent-status-running {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--panel-accent);
+  opacity: 0.6;
+  animation: subagent-pulse 1.6s ease-in-out infinite;
+}
+
+.subagent-status-failed {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--panel-danger);
+  font-weight: 600;
+}
+
+.subagent-status-failed.has-error-detail {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-inline-end: -4px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.subagent-status-failed.has-error-detail:hover {
+  background: color-mix(in srgb, var(--panel-danger) 14%, transparent);
+}
+
+.subagent-status-failed.has-error-detail[data-copied] {
+  color: var(--panel-success);
+  background: color-mix(in srgb, var(--panel-success) 12%, transparent);
+  pointer-events: none;
+}
+
+.subagent-status-failed.has-error-detail[data-copied] .subagent-status-label {
+  display: none;
+}
+
+.subagent-status-failed.has-error-detail[data-copied]::after {
+  content: 'Copied!';
+}
+
+@keyframes subagent-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.85; }
+}
+
+/* Parallel group wrapper: subtle left accent border to visually connect independent agent blocks */
+.subagent-parallel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--panel-accent) 22%, var(--panel-border));
+}
+
+.tool-call-summary {
+  display: block;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: var(--tool-call-summary-column-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--panel-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+}
+
+.tool-call-summary-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tool-call-file-path {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  opacity: 0.68;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.tool-call-file-path-text {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.tool-call-file-path.is-empty {
+  opacity: 0;
+}
+
+.tool-call-file-name {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 6px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--panel-subtle-surface) 85%, var(--vscode-sideBar-background, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel-border) 88%, var(--vscode-foreground) 12%);
+  transition: background 0.12s ease, box-shadow 0.12s ease, color 0.12s ease;
+}
+
+.tool-call-size-hint {
+  display: block;
+  min-width: 0;
+  flex: 0 0 var(--tool-call-size-column-width);
+  max-width: var(--tool-call-size-column-width);
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--panel-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  opacity: 0.48;
+}
+
+.tool-call-size-hint.is-empty {
+  display: none;
+}
+
+.tool-call-summary-link {
+  appearance: none;
+  display: block;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: var(--tool-call-summary-column-width);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.tool-call-summary-link:hover .tool-call-file-path,
+.tool-call-summary-link:focus-visible .tool-call-file-path {
+  opacity: 0.82;
+  color: color-mix(in srgb, var(--panel-muted) 74%, var(--vscode-foreground));
+}
+
+.tool-call-summary-link:hover .tool-call-file-name,
+.tool-call-summary-link:focus-visible .tool-call-file-name {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--panel-hover-surface) 74%, var(--panel-subtle-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel-border) 84%, var(--vscode-foreground) 16%);
+}
+
+.tool-call-status {
+  min-width: var(--tool-call-status-column-width);
+  max-width: var(--tool-call-status-column-width);
+  flex: 0 0 var(--tool-call-status-column-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--panel-muted);
+  opacity: 0.78;
+}
+
+.tool-call-status.is-empty {
+  display: none;
+}
+
+.tool-call-status.running {
+  color: var(--panel-muted);
+  opacity: 0.92;
+}
+
+.tool-call-status.completed {
+  color: var(--panel-muted);
+  opacity: 0.92;
+}
+
+.tool-call-status.failed {
+  color: var(--panel-danger);
+  opacity: 1;
+}
+
+.tool-call-status.has-error-detail {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tool-call-status.has-error-detail:hover {
+  background: color-mix(in srgb, var(--panel-danger) 14%, transparent);
+}
+
+.tool-call-status.has-error-detail[data-copied] {
+  color: var(--panel-success);
+  background: color-mix(in srgb, var(--panel-success) 12%, transparent);
+  pointer-events: none;
+}
+
+.tool-call-status.has-error-detail[data-copied] .tool-call-status-label {
+  display: none;
+}
+
+.tool-call-status.has-error-detail[data-copied]::after {
+  content: 'Copied!';
+}
+
+.tool-call-section + .tool-call-section {
+  margin-top: 8px;
+}
+
+.subagent-messages {
+  --subagent-thread-gutter: 10px;
+  --subagent-thread-inset: 18px;
+  border-top: 1px solid var(--panel-border);
+  margin-inline-start: var(--subagent-thread-inset);
+  padding: 4px var(--subagent-thread-gutter) 4px 0;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+  user-select: text;
+  background:
+    linear-gradient(180deg, var(--panel-accent-surface) 0%, transparent 120px),
+    var(--panel-subtle-surface);
+}
+
+.subagent-running-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0;
+}
+
+.subagent-running-tool {
+  font-size: 11px;
+  color: var(--panel-muted);
+  background: var(--panel-hover-surface);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.tool-call-pre {
+  white-space: pre;
+}
+

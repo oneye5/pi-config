@@ -1,0 +1,804 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import DOMPurify from 'dompurify';
+import { h } from 'preact';
+import renderToString from 'preact-render-to-string';
+
+import { emptyOverlay } from '../src/webview/panel/overlay';
+import {
+  DEFAULT_CHAT_PREFS,
+  EMPTY_TRANSCRIPT_WINDOW,
+  type ChatMessage,
+  type ChatMessagePart,
+  type SystemPromptEntry,
+  type ToolCall,
+} from '../src/shared/protocol';
+
+DOMPurify.sanitize = ((html: string) => html) as typeof DOMPurify.sanitize;
+
+const overlay = emptyOverlay();
+const noop = () => undefined;
+const noopContextMenu = () => undefined;
+
+function assistantMessage(parts: ChatMessagePart[], overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: 'assistant-1',
+    role: 'assistant',
+    createdAt: '2026-01-01T12:34:56.000Z',
+    markdown: 'fallback',
+    parts,
+    status: 'streaming',
+    modelId: 'claude-sonnet-4-5:cloud',
+    thinkingLevel: 'high',
+    durationMs: 1500,
+    ...overrides,
+  };
+}
+
+function userMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: 'user-1',
+    role: 'user',
+    createdAt: '2026-01-01T12:34:56.000Z',
+    markdown: 'Edit me',
+    status: 'completed',
+    ...overrides,
+  };
+}
+
+function toolCall(overrides: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'tool-1',
+    name: 'write',
+    input: { path: '/repo/src/file.ts', content: 'export const value = 1;\n' },
+    result: { content: [{ type: 'text', text: 'ok' }] },
+    status: 'completed',
+    ...overrides,
+  };
+}
+
+async function loadWebviewModules() {
+  const [messageItemModule, toolCallCardModule, toolCallItemModule, virtualRowModule, systemPromptsModule] = await Promise.all([
+    import('../src/webview/panel/transcript/message-item.tsx'),
+    import('../src/webview/panel/transcript/tool-call-card.tsx'),
+    import('../src/webview/panel/transcript/tool-call-item.tsx'),
+    import('../src/webview/panel/transcript/virtual-list-row.tsx'),
+    import('../src/webview/panel/system-prompts.tsx'),
+    import('../src/webview/panel/transcript/register-builtins'),
+  ]);
+
+  return {
+    MessageItem: messageItemModule.MessageItem,
+    ReasoningBlock: messageItemModule.ReasoningBlock,
+    ToolCallHeader: toolCallCardModule.ToolCallHeader,
+    ToolCallItem: toolCallItemModule.ToolCallItem,
+    TranscriptVirtualRow: virtualRowModule.TranscriptVirtualRow,
+    SystemPromptMessage: systemPromptsModule.SystemPromptMessage,
+  };
+}
+
+test('rendered MessageItem covers assistant, editable user, and image-user branches', async () => {
+  const { MessageItem, ReasoningBlock } = await loadWebviewModules();
+  const prefs = {
+    ...DEFAULT_CHAT_PREFS,
+    autoExpandReasoning: true,
+  };
+
+  const assistantHtml = renderToString(h(MessageItem, {
+    message: assistantMessage([
+      { kind: 'reasoning', text: '**Plan** the fix' },
+      { kind: 'text', text: 'Hello **world**' },
+      { kind: 'toolCall', toolCall: toolCall({ id: 'tool-inline', name: 'read', input: { path: '/repo/README.md' }, result: undefined, status: 'running' }) },
+    ]),
+    overlayParts: [{ kind: 'text', text: ' plus overlay' }],
+    isStreaming: true,
+    prefs,
+    readonly: true,
+    workingDirectory: '/repo',
+    editingId: null,
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => h('span', { class: 'rendered-tool' }, 'rendered tool'),
+    isLastAssistantMessage: true,
+  }));
+
+  assert.match(assistantHtml, /Reasoning/);
+  assert.match(assistantHtml, /rendered-tool/);
+  assert.match(assistantHtml, /Hello <strong>world<\/strong>/);
+  assert.match(assistantHtml, /plus overlay/);
+  assert.match(assistantHtml, /Agent is responding/);
+  assert.match(assistantHtml, /claude-sonnet-4-5:cloud high/);
+
+  const editingHtml = renderToString(h(MessageItem, {
+    message: userMessage(),
+    overlayParts: undefined,
+    isStreaming: false,
+    prefs: DEFAULT_CHAT_PREFS,
+    readonly: false,
+    workingDirectory: '/repo',
+    editingId: 'user-1',
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+    isLastAssistantMessage: false,
+  }));
+
+  assert.match(editingHtml, /inline-editor-textarea/);
+  assert.match(editingHtml, />Save</);
+  assert.match(editingHtml, />Cancel</);
+
+  const imageHtml = renderToString(h(MessageItem, {
+    message: userMessage({
+      markdown: 'See attachment',
+      userParts: [
+        { kind: 'text', text: 'See attachment' },
+        { kind: 'image', mimeType: 'image/png', dataBase64: 'ZmFrZQ==', name: 'diagram.png', width: 100, height: 50 },
+      ],
+    }),
+    overlayParts: undefined,
+    isStreaming: false,
+    prefs: DEFAULT_CHAT_PREFS,
+    readonly: true,
+    workingDirectory: '/repo',
+    editingId: null,
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+    isLastAssistantMessage: false,
+  }));
+
+  assert.match(imageHtml, /message-user-image/);
+  assert.match(imageHtml, /diagram\.png/);
+  assert.match(imageHtml, /100×50/);
+
+  const reasoningHtml = renderToString(h(ReasoningBlock, {
+    text: 'Collapsed summary text',
+    autoExpand: false,
+    disclosureKey: 'reasoning:test',
+    onContextMenu: noop,
+  }));
+  assert.match(reasoningHtml, /thinking-block-summary/);
+});
+
+test('rendered tool-call components cover collapsed summaries, expanded bodies, and subagent metadata', async () => {
+  const { ToolCallHeader, ToolCallItem } = await loadWebviewModules();
+
+  const headerHtml = renderToString(h(ToolCallHeader, {
+    open: false,
+    name: 'read',
+    nameTitle: 'Read file',
+    status: 'failed',
+    summary: 'src/example.ts',
+    summaryPath: '/repo/src/example.ts',
+    sizeHint: '+3 lines',
+    errorDetail: 'boom',
+    onOpenFile: noop,
+  }));
+
+  assert.match(headerHtml, /tool-call-summary-link/);
+  assert.match(headerHtml, /tool-call-file-name/);
+  assert.match(headerHtml, /Failed/);
+  assert.match(headerHtml, /tool-call-size-hint/);
+
+  const expandedToolHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall(),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandToolCalls: true },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(expandedToolHtml, /tool-call-body/);
+  assert.match(expandedToolHtml, /tool-call-section-label/);
+  assert.match(expandedToolHtml, /Result/);
+  assert.match(expandedToolHtml, /export const value = 1/);
+
+  const subagentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-1',
+      name: 'subagent',
+      input: { agent: 'reviewer', task: 'Inspect regression', taskScores: { precision: 4, reasoning: 5 } },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'reviewer',
+            agentSource: 'user',
+            task: 'Inspect regression',
+            exitCode: 0,
+            messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Looks good.' }], model: 'claude-sonnet-4-5:cloud' }],
+            stderr: '',
+            usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, contextTokens: 50, turns: 1 },
+            selectedModel: 'claude-sonnet-4-5:cloud',
+            taskScores: { precision: 4, reasoning: 5 },
+            thinkingLevel: 'high',
+          }],
+        },
+      },
+    }),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandSubagentCalls: true, autoExpandReasoning: true },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(subagentHtml, /subagent-agent-name/);
+  assert.match(subagentHtml, /subagent-scores/);
+  assert.doesNotMatch(subagentHtml, /subagent-model-tag/);
+  assert.doesNotMatch(subagentHtml, /subagent-thinking-tag/);
+  assert.match(subagentHtml, /Looks good/);
+
+  const runningSubagentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-running',
+      name: 'subagent',
+      status: 'running',
+      input: { agent: 'worker', task: 'Keep working' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'worker',
+            task: 'Keep working',
+            exitCode: 0,
+            messages: [],
+            runningTools: ['bash'],
+          }],
+        },
+      },
+    }),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandSubagentCalls: true },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+  assert.match(runningSubagentHtml, /subagent-status-running/);
+  assert.match(runningSubagentHtml, /subagent-running-tool/);
+
+  const parallelSubagentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-parallel',
+      name: 'subagent',
+      input: { tasks: [{ agent: 'scout', task: 'A' }, { agent: 'reviewer', task: 'B' }] },
+      result: {
+        details: {
+          mode: 'parallel',
+          results: [
+            { agent: 'scout', task: 'A', exitCode: 0, messages: [] },
+            { agent: 'reviewer', task: 'B', exitCode: 1, messages: [], stderr: 'boom', stopReason: 'error' },
+          ],
+        },
+      },
+    }),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandSubagentCalls: true },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+  assert.match(parallelSubagentHtml, /subagent-parallel-group/);
+  assert.match(parallelSubagentHtml, /Failed/);
+
+  const fallbackSubagentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-fallback',
+      name: 'subagent',
+      status: 'failed',
+      input: { tasks: [{ agent: 'worker', task: 'Do it' }] },
+      result: {
+        content: [{ type: 'text', text: 'Too many parallel tasks.' }],
+        details: { mode: 'parallel', results: [] },
+        isError: true,
+      },
+    }),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandSubagentCalls: false },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+  assert.match(fallbackSubagentHtml, /tool-call-subagent/);
+  assert.match(fallbackSubagentHtml, /Too many parallel tasks/);
+});
+
+test('rendered ToolCallItem hides subagent model-selection badges in collapsed headers', async () => {
+  const { ToolCallItem } = await loadWebviewModules();
+
+  const html = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-actual-model',
+      name: 'subagent',
+      input: { agent: 'reviewer', task: 'Inspect runtime model' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'reviewer',
+            task: 'Inspect runtime model',
+            exitCode: 0,
+            model: 'gpt-5.4',
+            messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }], model: 'gpt-5.4' }],
+            selectedModel: 'claude-opus-4.6',
+            taskScores: { precision: 4, reasoning: 5 },
+            thinkingLevel: 'high',
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(html, /Inspect runtime model/);
+  assert.doesNotMatch(html, /gpt-5\.4/);
+  assert.doesNotMatch(html, /claude-opus-4\.6/);
+  assert.doesNotMatch(html, /subagent-model-tag/);
+});
+
+test('rendered ToolCallItem covers collapsed, inferred, and parallel subagent branches', async () => {
+  const { ToolCallItem } = await loadWebviewModules();
+
+  const collapsedHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-collapsed',
+      name: 'subagent',
+      input: { agent: 'reviewer', task: 'Inspect regression' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'reviewer',
+            task: 'Inspect regression',
+            exitCode: 0,
+            messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }],
+            selectedModel: 'claude-sonnet-4-5:cloud',
+            taskScores: { precision: 4 },
+            thinkingLevel: 'high',
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(collapsedHtml, /subagent-header-summary/);
+  assert.match(collapsedHtml, /Inspect regression/);
+  assert.doesNotMatch(collapsedHtml, /reviewer: Inspect regression/);
+  assert.match(collapsedHtml, /Creativity: 2\/5 \(default\)/);
+  assert.doesNotMatch(collapsedHtml, /subagent-secondary-meta/);
+  assert.doesNotMatch(collapsedHtml, /subagent-model-tag/);
+  assert.doesNotMatch(collapsedHtml, /subagent-thinking-tag/);
+  assert.doesNotMatch(collapsedHtml, /claude-sonnet-4-5/);
+  assert.doesNotMatch(collapsedHtml, /subagent-messages/);
+
+  const inferredSubagentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-inferred',
+      name: 'bash',
+      input: { command: 'echo delegate' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'planner',
+            task: 'Plan the fix',
+            exitCode: 0,
+            messages: [],
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(inferredSubagentHtml, /tool-call-subagent/);
+  assert.match(inferredSubagentHtml, /planner/);
+  assert.doesNotMatch(inferredSubagentHtml, /subagent-primary-meta/);
+  assert.doesNotMatch(inferredSubagentHtml, /subagent-secondary-meta/);
+  assert.doesNotMatch(inferredSubagentHtml, /subagent-status/);
+
+  const failedParentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-parent-failed',
+      name: 'subagent',
+      status: 'failed',
+      input: { agent: 'reviewer', task: 'Inspect regression' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'reviewer',
+            task: 'Inspect regression',
+            exitCode: 0,
+            messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Partial output.' }] }],
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(failedParentHtml, /subagent-status-failed/);
+  assert.doesNotMatch(failedParentHtml, /has-error-detail/);
+
+  const runningParentHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-parent-running',
+      name: 'subagent',
+      status: 'running',
+      input: { agent: 'scout', task: 'Gather logs' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'scout',
+            task: 'Gather logs',
+            exitCode: 0,
+            messages: [],
+            selectedModel: 'gpt-4.1:local',
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(runningParentHtml, /aria-label="Running"/);
+  assert.doesNotMatch(runningParentHtml, /subagent-model-tag/);
+  assert.doesNotMatch(runningParentHtml, /gpt-4\.1/);
+
+  const abortedHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-aborted',
+      name: 'subagent',
+      status: 'completed',
+      input: { agent: 'reviewer', task: 'Inspect cancellation' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [{
+            agent: 'reviewer',
+            task: 'Inspect cancellation',
+            exitCode: 1,
+            messages: [],
+            stopReason: 'aborted',
+            stderr: 'cancelled by caller',
+          }],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(abortedHtml, /subagent-status-failed has-error-detail/);
+  assert.match(abortedHtml, /Aborted: cancelled by caller/);
+
+  const fallbackHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-fallback',
+      name: 'subagent',
+      status: 'completed',
+      input: { agent: 'reviewer', task: 'Inspect regression' },
+      result: {
+        details: {
+          mode: 'single',
+          results: [],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(fallbackHtml, /tool-call-subagent/);
+  assert.match(fallbackHtml, /reviewer: Inspect regression/);
+  assert.doesNotMatch(fallbackHtml, /subagent-agent-name/);
+
+  const parallelHtml = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-parallel',
+      name: 'subagent',
+      status: 'completed',
+      input: {
+        tasks: [
+          { agent: 'scout', task: 'Gather logs' },
+          { agent: 'reviewer', task: 'Review output' },
+        ],
+      },
+      result: {
+        details: {
+          mode: 'parallel',
+          results: [
+            {
+              agent: 'scout',
+              task: 'Gather logs',
+              exitCode: -1,
+              messages: [],
+              runningTools: ['bash'],
+            },
+            {
+              agent: 'reviewer',
+              task: 'Review output',
+              exitCode: 1,
+              messages: [],
+              stopReason: 'error',
+              errorMessage: 'spawn EPERM',
+              stderr: 'permission denied',
+            },
+          ],
+        },
+      },
+    }),
+    prefs: { ...DEFAULT_CHAT_PREFS, autoExpandSubagentCalls: true },
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(parallelHtml, /subagent-parallel-group/);
+  assert.match(parallelHtml, /subagent-running-tool">bash…/);
+  assert.match(parallelHtml, /aria-label="Running"/);
+  assert.match(parallelHtml, /subagent-status-failed has-error-detail/);
+  assert.match(parallelHtml, /Error: spawn EPERM: permission denied/);
+});
+
+test('rendered parallel subagent cards keep per-child summaries and statuses while the parent is still running', async () => {
+  const { ToolCallItem } = await loadWebviewModules();
+
+  const html = renderToString(h(ToolCallItem, {
+    toolCall: toolCall({
+      id: 'sub-parallel-running-state',
+      name: 'subagent',
+      status: 'running',
+      input: {
+        tasks: [
+          { agent: 'scout', task: 'Gather logs' },
+          { agent: 'reviewer', task: 'Review output' },
+        ],
+      },
+      result: {
+        details: {
+          mode: 'parallel',
+          results: [
+            {
+              agent: 'scout',
+              task: 'Gather logs',
+              exitCode: -1,
+              messages: [],
+              runningTools: ['bash'],
+            },
+            {
+              agent: 'reviewer',
+              task: 'Review output',
+              exitCode: 1,
+              messages: [],
+              stopReason: 'error',
+              stderr: 'boom',
+            },
+          ],
+        },
+      },
+    }),
+    prefs: DEFAULT_CHAT_PREFS,
+    workingDirectory: '/repo',
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    renderToolCall: () => null,
+  }));
+
+  assert.match(html, /<span class="subagent-agent-name">scout<\/span>/);
+  assert.match(html, /<span class="subagent-agent-name">reviewer<\/span>/);
+  assert.match(html, /Gather logs/);
+  assert.match(html, /Review output/);
+  assert.doesNotMatch(html, /scout: Gather logs/);
+  assert.doesNotMatch(html, /reviewer: Review output/);
+  assert.equal((html.match(/tool-call tool-call-subagent running/g) ?? []).length, 1);
+  assert.equal((html.match(/tool-call tool-call-subagent failed/g) ?? []).length, 1);
+  assert.equal((html.match(/subagent-status-running/g) ?? []).length, 1);
+  assert.equal((html.match(/subagent-status-failed/g) ?? []).length, 1);
+});
+
+test('rendered SystemPromptMessage covers summary fallbacks, suppressed summaries, and token estimate branches', async () => {
+  const { SystemPromptMessage } = await loadWebviewModules();
+
+  const prompts: SystemPromptEntry[] = [
+    {
+      source: 'harness',
+      availability: 'available',
+      title: 'Harness system prompt',
+      text: '**Plan** carefully before editing.\n\nKeep notes.',
+      summary: '',
+    },
+    {
+      source: 'provider',
+      availability: 'unknown',
+      title: 'Provider prompt',
+      text: 'Configured elsewhere.',
+      summary: 'Configured elsewhere.',
+    },
+    {
+      source: 'user',
+      availability: 'hidden',
+      title: 'User prompt',
+      text: 'Unavailable to the webview.',
+      summary: 'Unavailable',
+    },
+  ];
+
+  const html = renderToString(h(SystemPromptMessage, { prompts }));
+
+  assert.match(html, /Plan carefully before editing\. Keep notes\./);
+  assert.doesNotMatch(html, /Configured elsewhere\.<\/span>/);
+  assert.doesNotMatch(html, />Unavailable<\/span>/);
+  assert.match(html, /message-duration/);
+  assert.match(html, /not included/i);
+
+  const zeroTokenHtml = renderToString(h(SystemPromptMessage, {
+    prompts: [{
+      source: 'harness',
+      availability: 'available',
+      title: 'Blank prompt',
+      text: '   ',
+      summary: '',
+    }],
+  }));
+
+  assert.match(zeroTokenHtml, /Blank prompt/);
+  assert.doesNotMatch(zeroTokenHtml, /message-duration/);
+});
+
+test('rendered SystemPromptMessage and TranscriptVirtualRow cover prompt and gap rows', async () => {
+  const { SystemPromptMessage, TranscriptVirtualRow } = await loadWebviewModules();
+  const prompt: SystemPromptEntry = {
+    source: 'harness',
+    availability: 'available',
+    title: 'Harness system prompt',
+    text: 'Always validate changes.',
+    summary: 'Always validate changes.',
+  };
+
+  const systemPromptHtml = renderToString(h(SystemPromptMessage, { prompts: [prompt] }));
+  assert.match(systemPromptHtml, /System prompts/);
+  assert.match(systemPromptHtml, /system-prompt-card/);
+  assert.match(systemPromptHtml, /Harness system prompt/);
+
+  const hiddenSummaryHtml = renderToString(h(SystemPromptMessage, {
+    prompts: [
+      {
+        source: 'provider',
+        availability: 'unknown',
+        title: 'Provider system prompt',
+        text: 'unknown',
+        summary: 'unknown',
+      },
+      {
+        source: 'user',
+        availability: 'missing',
+        title: 'Custom system prompt',
+        text: '',
+        summary: 'none configured',
+      },
+    ],
+  }));
+  assert.match(hiddenSummaryHtml, /Provider system prompt/);
+  assert.doesNotMatch(hiddenSummaryHtml, /tool-call-summary/);
+
+  const topGapHtml = renderToString(h(TranscriptVirtualRow, {
+    row: { kind: 'topGap', key: 'top-gap' },
+    busy: false,
+    overlay,
+    prefs: DEFAULT_CHAT_PREFS,
+    systemPrompts: [prompt],
+    workingDirectory: '/repo',
+    editingId: null,
+    isLoadingOlder: false,
+    isLoadingNewer: false,
+    isLastRow: false,
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    onRequestOlder: noop,
+    onRequestNewer: noop,
+    renderToolCall: () => null,
+  }));
+  assert.match(topGapHtml, /Load older messages/);
+
+  const bottomGapHtml = renderToString(h(TranscriptVirtualRow, {
+    row: { kind: 'bottomGap', key: 'bottom-gap' },
+    busy: false,
+    overlay,
+    prefs: DEFAULT_CHAT_PREFS,
+    systemPrompts: [prompt],
+    workingDirectory: '/repo',
+    editingId: null,
+    isLoadingOlder: false,
+    isLoadingNewer: true,
+    isLastRow: false,
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    onRequestOlder: noop,
+    onRequestNewer: noop,
+    renderToolCall: () => null,
+  }));
+  assert.match(bottomGapHtml, /Loading newer messages…/);
+
+  const messageRowHtml = renderToString(h(TranscriptVirtualRow, {
+    row: { kind: 'message', key: 'message-row', message: assistantMessage([{ kind: 'text', text: 'Rendered row' }], { status: 'completed' }) },
+    busy: true,
+    overlay,
+    prefs: DEFAULT_CHAT_PREFS,
+    systemPrompts: [prompt],
+    workingDirectory: '/repo',
+    editingId: null,
+    isLoadingOlder: false,
+    isLoadingNewer: false,
+    isLastRow: true,
+    onEditRequest: noop,
+    onEditConfirm: noop,
+    onEditCancel: noop,
+    onOpenFile: noop,
+    onContextMenu: noopContextMenu,
+    onRequestOlder: noop,
+    onRequestNewer: noop,
+    renderToolCall: () => null,
+  }));
+  assert.match(messageRowHtml, /Rendered row/);
+  assert.match(messageRowHtml, /message-glow-indicator/);
+
+  const emptyPromptHtml = renderToString(h(SystemPromptMessage, { prompts: [] }));
+  assert.equal(emptyPromptHtml, '');
+  assert.deepEqual(EMPTY_TRANSCRIPT_WINDOW, {
+    totalCount: 0,
+    loadedStart: 0,
+    loadedEnd: 0,
+    hasOlder: false,
+    hasNewer: false,
+    isPartial: false,
+    hasUserMessages: false,
+  });
+});

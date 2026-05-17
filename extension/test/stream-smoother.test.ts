@@ -174,3 +174,77 @@ test('StreamSmoother handles multiple messages independently', () => {
 
   assert.equal(smoother.getPendingCharCount(), 10);
 });
+
+test('StreamSmoother keeps the first emit deadline when more buffered deltas arrive', (t) => {
+  let flushedOverlay: ReturnType<typeof smoother.flushAll> | null = null;
+  const smoother = new StreamSmoother(
+    {
+      minCharsForSmoothing: 1,
+      maxEmitBatch: 2,
+      charDisplayMs: 1,
+      minEmitIntervalMs: 30,
+    },
+    (overlay) => {
+      flushedOverlay = overlay;
+    },
+  );
+
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  smoother.processPatch({
+    kind: 'messageDelta',
+    messageId: 'msg1',
+    delta: 'abcd',
+  });
+  t.mock.timers.tick(10);
+
+  smoother.processPatch({
+    kind: 'messageDelta',
+    messageId: 'msg1',
+    delta: 'efgh',
+  });
+  t.mock.timers.tick(10);
+
+  smoother.processPatch({
+    kind: 'messageDelta',
+    messageId: 'msg1',
+    delta: 'ijkl',
+  });
+
+  t.mock.timers.tick(9);
+  assert.equal(flushedOverlay, null);
+
+  t.mock.timers.tick(1);
+  assert.equal(flushedOverlay?.partsByMessage.get('msg1')?.[0]?.kind, 'text');
+  assert.equal(flushedOverlay?.partsByMessage.get('msg1')?.[0]?.text, 'ab');
+  assert.equal(smoother.getPendingCharCount(), 10);
+});
+
+test('StreamSmoother honours charDisplayMs when it exceeds the minimum interval', (t) => {
+  let flushCalls = 0;
+  const smoother = new StreamSmoother(
+    {
+      minCharsForSmoothing: 1,
+      maxEmitBatch: 2,
+      charDisplayMs: 40,
+      minEmitIntervalMs: 20,
+    },
+    () => {
+      flushCalls += 1;
+    },
+  );
+
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  smoother.processPatch({
+    kind: 'messageDelta',
+    messageId: 'msg1',
+    delta: 'abcd',
+  });
+
+  t.mock.timers.tick(39);
+  assert.equal(flushCalls, 0);
+
+  t.mock.timers.tick(1);
+  assert.equal(flushCalls, 1);
+});

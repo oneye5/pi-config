@@ -2,6 +2,9 @@ import type { SystemPromptEntry } from '../shared/protocol';
 import { prepareContextFiles } from './context-files';
 import type { SdkBuildSystemPromptOptions, SdkSkill, SdkToolInfo } from './sdk';
 
+/** Maximum characters for system prompt and tool description summaries. */
+const SUMMARY_MAX_LENGTH = 80;
+
 export function summarizePrompt(text: string): string {
   const stripped = text
     .replace(/\*\*?(.*?)\*\*?/g, '$1')
@@ -9,7 +12,7 @@ export function summarizePrompt(text: string): string {
     .replace(/#{1,6}\s+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  return stripped.length > 80 ? stripped.slice(0, 80) + '...' : stripped;
+  return stripped.length > SUMMARY_MAX_LENGTH ? stripped.slice(0, SUMMARY_MAX_LENGTH) + '...' : stripped;
 }
 
 export function normalizePromptText(text: string | undefined): string | undefined {
@@ -19,7 +22,7 @@ export function normalizePromptText(text: string | undefined): string | undefine
 
 function buildSkillSummary(skills: readonly SdkSkill[]): string {
   const summary = skills.map((skill) => skill.name).join(', ');
-  return summary.length > 80 ? `${summary.slice(0, 80)}...` : summary;
+  return summary.length > SUMMARY_MAX_LENGTH ? `${summary.slice(0, SUMMARY_MAX_LENGTH)}...` : summary;
 }
 
 function splitRuntimeContext(text: string | undefined): {
@@ -170,25 +173,29 @@ export function buildSessionSystemPrompts(options: {
     entries.push({
       source: 'harness',
       title: 'Tools',
-      summary: toolSummary.length > 80 ? `${toolSummary.slice(0, 80)}...` : toolSummary,
+      summary: toolSummary.length > SUMMARY_MAX_LENGTH ? `${toolSummary.slice(0, SUMMARY_MAX_LENGTH)}...` : toolSummary,
       text: toolText,
       availability: 'available',
     });
   }
 
   const shouldIncludeSkills = !promptOptions?.selectedTools || promptOptions.selectedTools.includes('read');
-  const skills = promptOptions?.skills ?? [];
+  const skills = (promptOptions?.skills ?? []).filter(
+    (s): s is SdkSkill => !!s && typeof s.name === 'string',
+  );
   if (shouldIncludeSkills && formatSkillsForPrompt && skills.length > 0) {
-    const formattedSkills = normalizePromptText(formatSkillsForPrompt(skills));
-    if (formattedSkills) {
-      entries.push({
-        source: 'user',
-        title: 'Skills',
-        summary: buildSkillSummary(skills),
-        text: formattedSkills,
-        availability: 'available',
-      });
-    }
+    try {
+      const formattedSkills = normalizePromptText(formatSkillsForPrompt(skills));
+      if (formattedSkills) {
+        entries.push({
+          source: 'user',
+          title: 'Skills',
+          summary: buildSkillSummary(skills),
+          text: formattedSkills,
+          availability: 'available',
+        });
+      }
+    } catch { /* SDK formatSkillsForPrompt may crash on malformed skill data */ }
   }
 
   const runtimeContext = customPrompt

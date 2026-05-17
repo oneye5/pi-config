@@ -1,10 +1,12 @@
-import type { Skill } from "@mariozechner/pi-coding-agent";
-import type { PruningConfig, ScoredSkill, SkillScoreCacheEntry, SkillTriggers, ThresholdResult } from "./types.js";
+import type { Skill, ToolInfo } from "@mariozechner/pi-coding-agent";
+import type { PruningConfig, ScoredSkill, SkillScoreCacheEntry, SkillTriggers, ThresholdResult, ToolPruningConfig, ScoredTool, ToolTier } from "./types.js";
 
 const STOP_WORDS = new Set([
 	"a", "an", "and", "or", "the", "is", "are", "of", "to", "in", "on", "for", "with", "this", "that", "by", "at", "as", "be", "it", "its", "from", "into", "when", "use", "do", "not", "using",
 ]);
 const CONNECTOR_WORDS = new Set(["and", "or", "for", "the"]);
+/** Maximum characters of context content used as bias signal during scoring. */
+const CONTEXT_CONTENT_LIMIT = 500;
 let warnedPinnedCeiling = false;
 
 function clamp(value: number): number {
@@ -97,21 +99,30 @@ export function computeTriggerMatch(query: string, triggers: SkillTriggers): num
 }
 
 export function computeKeywordOverlap(query: string, text: string, nameTokens: string[] = []): number {
+	// Weighted Jaccard-style overlap: the text side is a bag containing body
+	// tokens with their natural multiplicity plus each skill-name token twice.
+	// The query side uses set semantics. Matching query tokens score by their
+	// text-bag multiplicity, while the denominator is the unique-token union.
 	const queryTokens = new Set(tokenize(query));
-	const nameTokenSet = new Set(nameTokens);
-	const textTokens = new Set([...tokenize(text), ...nameTokens]);
+	const textBag = new Map<string, number>();
 
-	let intersectionWeighted = 0;
-	for (const token of queryTokens) {
-		if (textTokens.has(token)) intersectionWeighted++;
-		// Jaccard is set-based, so a true 2x bag weight is not directly representable.
-		// Interpret the plan's name-token weighting as one extra intersection hit when
-		// the query token also matches a skill-name token, while the union remains set-based.
-		if (nameTokenSet.has(token)) intersectionWeighted++;
+	for (const token of tokenize(text)) {
+		textBag.set(token, (textBag.get(token) ?? 0) + 1);
 	}
 
-	const union = new Set([...queryTokens, ...textTokens]);
-	return clamp(intersectionWeighted / Math.max(1, union.size));
+	for (const token of nameTokens) {
+		if (!STOP_WORDS.has(token)) {
+			textBag.set(token, (textBag.get(token) ?? 0) + 2);
+		}
+	}
+
+	let intersectionSize = 0;
+	for (const token of queryTokens) {
+		intersectionSize += textBag.get(token) ?? 0;
+	}
+
+	const union = new Set([...queryTokens, ...textBag.keys()]);
+	return clamp(intersectionSize / Math.max(1, union.size));
 }
 
 export function computeNameMatch(query: string, name: string): number {
@@ -166,7 +177,7 @@ export function scoreSkills(
 ): ScoredSkill[] {
 	// Context is a secondary bias signal: use the prompt plus only the first 500
 	// context characters to avoid making scoring itself context-heavy.
-	const combinedQuery = `${query} ${contextContent.slice(0, 500)}`;
+	const combinedQuery = `${query} ${contextContent.slice(0, CONTEXT_CONTENT_LIMIT)}`;
 	const rawScores = skills.map((skill) => {
 		const { triggers, nameTokens } = getCacheEntry(skill, cache);
 		return {
@@ -206,6 +217,86 @@ function byNameAsc(a: ScoredSkill, b: ScoredSkill): number {
 
 function withPinned(skill: ScoredSkill): ScoredSkill {
 	return { ...skill, pinned: true };
+}
+
+export function scoreTools(
+	query: string,
+	contextContent: string,
+	tools: ToolInfo[],
+	config: ToolPruningConfig
+): ScoredTool[] {
+	const combinedQuery = `${query} ${contextContent.slice(0, CONTEXT_CONTENT_LIMIT)}`;
+	const rawScores = tools.map(tool => {
+		const tier = config.tiers[tool.name] || 'contextual';
+		const keywordScore = computeKeywordOverlap(combinedQuery, tool.description ?? "", tokenize(tool.name));
+		const nameScore = computeNameMatch(combinedQuery, tool.name);
+		return {
+			tool,
+			tier,
+			keywordScore,
+			nameScore
+		};
+	});
+
+	const keywordNormalized = normalizeScores(rawScores.map(rs => rs.keywordScore));
+	const nameNormalized = normalizeScores(rawScores.map(rs => rs.nameScore));
+
+	return rawScores.map((rs, index) => {
+		const compositeScore = 0.6 * keywordNormalized[index] + 0.4 * nameNormalized[index];
+		return {
+			name: rs.tool.name,
+			description: rs.tool.description,
+			tier: rs.tier as ToolTier,
+			keywordScore: rs.keywordScore,
+			nameScore: rs.nameScore,
+			compositeScore,
+		};
+	}).sort((a, b) => b.compositeScore - a.compositeScore);
+}
+
+export function applyToolThreshold(
+	scored: ScoredTool[],
+	activeTools: string[],
+	config: ToolPruningConfig
+): { included: string[], excluded: string[] } {
+	const coreTools = scored.filter(t => t.tier === 'core').map(t => t.name);
+	const included = new Set(coreTools);
+
+	// Rare tools are excluded by default (available only via request_tool recovery)
+	// Process contextual tools
+	const contextualTools = scored.filter(t => t.tier === 'contextual');
+	if (contextualTools.length > 0) {
+		const ceiling = config.ceiling;
+		const sortedContextual = contextualTools
+			.sort((a, b) => b.compositeScore - a.compositeScore)
+			.slice(0, ceiling)
+			.map(t => t.name);
+		sortedContextual.forEach(name => included.add(name));
+	}
+
+	// Expand dependencies
+	const dependencies = config.dependencies || {};
+	const queue = [...included];
+	const expanded = new Set(included);
+	while (queue.length > 0) {
+		const tool = queue.shift()!;
+		const deps = dependencies[tool] || [];
+		for (const dep of deps) {
+			if (!expanded.has(dep)) {
+				expanded.add(dep);
+				queue.push(dep);
+			}
+		}
+	}
+
+	// Build exclusion list
+	const allToolNames = scored.map(t => t.name);
+	const excluded = allToolNames.filter(name => !expanded.has(name));
+
+	return {
+		included: Array.from(expanded),
+		excluded,
+	};
 }
 
 export function applyThreshold(

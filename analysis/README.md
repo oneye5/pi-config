@@ -109,6 +109,7 @@ Site-data files:
 - `tool-usage.json`
 - `treatment-comparison.json`
 - `timeline.json`
+- `model-leaderboard.json`
 
 ## Query names
 

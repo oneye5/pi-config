@@ -1,0 +1,217 @@
+﻿.file-changes-panel {
+  position: absolute;
+  top: -1px;
+  right: 16px;
+  z-index: 260;
+  max-width: min(420px, calc(100% - 32px));
+  border: 1px solid color-mix(in srgb, var(--panel-border) 88%, var(--vscode-foreground) 12%);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: var(--session-tabs-strip-surface);
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--vscode-foreground) 8%, transparent),
+    0 8px 20px -18px color-mix(in srgb, var(--vscode-widget-shadow, rgba(0, 0, 0, 0.28)) 100%, transparent);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.file-changes-panel:not(.expanded) {
+  background: var(--session-tabs-strip-surface);
+  border-color: var(--panel-border);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--panel-border) 72%, transparent),
+    0 7px 16px -12px color-mix(in srgb, var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36)) 100%, transparent);
+}
+
+.file-changes-panel.expanded {
+  width: min(420px, calc(100% - 32px));
+}
+
+.file-changes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.15;
+  color: var(--vscode-foreground);
+  transition: background 0.12s ease;
+}
+
+.file-changes-panel:not(.expanded) .file-changes-header {
+  width: auto;
+  gap: 6px;
+  padding: 4px 10px 5px;
+}
+
+.file-changes-header:hover {
+  background: var(--panel-hover-surface);
+}
+
+.file-changes-panel:not(.expanded) .file-changes-header:hover {
+  background: color-mix(in srgb, var(--panel-hover-surface) 76%, var(--vscode-foreground) 24%);
+}
+
+.file-changes-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--panel-muted);
+  transition: transform 0.18s ease;
+  transform: rotate(0deg);
+}
+
+.file-changes-panel:not(.expanded) .file-changes-chevron {
+  color: color-mix(in srgb, var(--vscode-foreground) 68%, var(--panel-muted));
+}
+
+.file-changes-chevron.open {
+  transform: rotate(90deg);
+}
+
+.file-changes-title {
+  flex: 1;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.file-changes-panel:not(.expanded) .file-changes-title {
+  flex: 0 0 auto;
+}
+
+.file-changes-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, var(--panel-subtle-surface));
+  color: color-mix(in srgb, var(--vscode-foreground) 82%, var(--panel-muted));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.file-changes-list {
+  border-top: 1px solid var(--panel-border);
+  max-height: min(260px, calc(50vh - 38px));
+  overflow-y: auto;
+}
+
+.file-change-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  transition: background 0.1s ease;
+}
+
+.file-change-item + .file-change-item {
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 60%, transparent);
+}
+
+.file-change-item:hover {
+  background: var(--panel-hover-surface);
+}
+
+.file-change-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.file-change-icon.created {
+  background: var(--panel-success);
+}
+
+.file-change-icon.modified {
+  background: var(--panel-warning);
+}
+
+.file-change-icon.deleted {
+  background: var(--panel-danger);
+}
+
+.file-change-path {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.file-change-path:hover .file-change-name {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.file-change-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-change-dir {
+  font-size: 10px;
+  color: var(--panel-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-change-revert {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-muted);
+  cursor: pointer;
+  font-size: 13px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.file-change-item:hover .file-change-revert {
+  opacity: 0.75;
+}
+
+.file-change-revert:hover {
+  opacity: 1 !important;
+  background: var(--panel-danger-surface);
+  color: var(--panel-danger);
+  border-color: var(--panel-danger);
+}
+
+/* ── Pruning Banner ──────────────────────────────────────────────────────── */
+

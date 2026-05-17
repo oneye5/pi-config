@@ -12,6 +12,12 @@ export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
 export const COLLAPSED_ITEM_COUNT = 10;
 export const MAX_MODEL_RETRIES = 5;
+/** Max characters shown when previewing a task description in chain/parallel renderCall. */
+export const TASK_PREVIEW_SHORT = 40;
+/** Max characters shown when previewing a task description in single-mode renderCall. */
+export const TASK_PREVIEW_LONG = 60;
+/** Max characters shown for parallel result summaries. */
+export const PARALLEL_SUMMARY_PREVIEW = 100;
 export const AGENT_SCOPE_VALUES = new Set<AgentScope>(["user", "project", "both"]);
 
 export interface UsageStats {
@@ -32,9 +38,12 @@ export interface SingleResult {
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
+	/** The model the subagent session actually ran with. */
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
+	/** Streaming text accumulated from in-progress assistant turn, available while running. */
+	streamingText?: string;
 	step?: number;
 	/** Tool names currently executing in this subagent (cleared when tool finishes). */
 	runningTools?: string[];
@@ -56,7 +65,7 @@ export interface SingleResult {
 	failedModel?: string;
 	/** How many fallback attempts were made before this result (0 = first try). */
 	retryCount?: number;
-	/** Diagnostic from model-profiles.json resolution when the override model wasn't found. */
+	/** Diagnostic when a requested model could not be resolved and execution fell back. */
 	modelResolutionDiagnostic?: string;
 }
 

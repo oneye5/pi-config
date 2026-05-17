@@ -115,7 +115,7 @@ async function buildSkillFactors(skills: SdkSkill[] | undefined): Promise<Sessio
   }));
 
   return factors
-    .filter((skill) => skill.name.trim().length > 0)
+    .filter((skill) => typeof skill.name === 'string' && skill.name.trim().length > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -141,6 +141,7 @@ export async function buildSessionAnalyticsFactors(options: {
     .sort((a, b) => a.path.localeCompare(b.path));
   const selectedToolIds = [...new Set(
     (promptOptions?.selectedTools ?? [])
+      .filter((toolId): toolId is string => typeof toolId === 'string')
       .map((toolId) => toolId.trim())
       .filter((toolId) => toolId.length > 0),
   )].sort((a, b) => a.localeCompare(b));
@@ -161,6 +162,7 @@ export async function buildSessionAnalyticsFactors(options: {
     : null;
   const activeExtensions = [...new Set(
     (promptOptions?.activeExtensions ?? [])
+      .filter((ext): ext is string => typeof ext === 'string')
       .map((ext) => ext.trim())
       .filter((ext) => ext.length > 0),
   )].sort();

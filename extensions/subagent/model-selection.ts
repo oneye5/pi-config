@@ -1,4 +1,41 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+/** Lazy-resolve the `yaml` package from available local/runtime dependencies. */
+let _yamlParse: ((raw: string) => unknown) | null | undefined;
+function getYamlParse(): ((raw: string) => unknown) | undefined {
+	if (_yamlParse !== undefined) return _yamlParse ?? undefined;
+
+	const baseRequire = createRequire(import.meta.url);
+	const candidates = [baseRequire];
+	try {
+		candidates.push(createRequire(new URL("../../extension/package.json", import.meta.url)));
+	} catch {
+		// extension package not available in this environment
+	}
+	try {
+		candidates.push(createRequire(baseRequire.resolve("@mariozechner/pi-coding-agent/package.json")));
+	} catch {
+		try {
+			candidates.push(createRequire(baseRequire.resolve("@mariozechner/pi-coding-agent")));
+		} catch {
+			// pi SDK not resolvable from this environment
+		}
+	}
+
+	for (const req of candidates) {
+		try {
+			const yaml = req("yaml") as { parse: (raw: string) => unknown };
+			_yamlParse = yaml.parse.bind(yaml);
+			return _yamlParse;
+		} catch {
+			// try next candidate
+		}
+	}
+
+	_yamlParse = null; // sentinel: don't retry on subsequent calls
+	return undefined;
+}
 
 export interface TaskScores {
 	precision?: number;
@@ -16,6 +53,17 @@ export interface ModelProfile {
 	creativity: number;
 	thoroughness: number;
 	reasoning: number;
+	/**
+	 * Explicit cost ranking (0–30+). Higher = more expensive relative to peers.
+	 * Used instead of the capability-dimension aggregate when present.
+	 *
+	 * This is a ranking heuristic, not a dollar amount. The absolute numbers aren't
+	 * grounded, but the *relative ordering* is: if model A has cost 0 and model B
+	 * has cost 20, then A is effectively free while B is expensive.
+	 *
+	 * Omit this field to fall back to aggregate(precision, creativity, thoroughness, reasoning).
+	 */
+	cost?: number;
 	/** Which thinking levels this model supports. Models that omit this accept all levels. */
 	thinking?: ThinkingLevel[];
 	eligible: boolean;
@@ -54,22 +102,25 @@ const DEFAULT_SCORE = 2;
  *                 - OVERKILL_WEIGHT * max(0, model[d] - task[d])     // penalty for exceeding
  *                 - DEFICIT_WEIGHT * max(0, task[d] - model[d])² ]   // penalty for falling short
  *
- *   final_score = fitness - COST_WEIGHT * Σ model[d]               // prefer cheaper models
+ *   final_score = fitness - COST_WEIGHT * cost                      // prefer cheaper models
+ *
+ * Cost is either an explicit `profile.cost` value or, when absent, the sum of the
+ * four capability dimensions (precision + creativity + thoroughness + reasoning).
+ * The explicit field decouples cost from capability, so a very expensive model
+ * (e.g. claude-opus-4.7) can carry a high cost penalty even when its capability
+ * aggregate is the same as a cheaper peer, and free models (cost=0) are strongly
+ * preferred when fitness is comparable.
  *
  * This avoids the "always pick the strongest model" problem of a plain dot product,
  * where overshooting requirements is purely rewarded. Instead:
  * - Meeting a requirement gives the bulk of the score (capped at task level)
  * - Exceeding a requirement is penalized (overkill costs resources without proportional benefit)
  * - Falling short incurs a quadratic penalty (unsuitable models are strongly avoided)
- * - Cheaper models (lower aggregate) are preferred when fitness is comparable
+ * - Cheaper models are preferred when fitness is comparable
  *
  * The overkill penalty means models that just barely meet requirements are preferred
  * over more powerful ones, while the reduced deficit penalty makes slightly-underpowered
  * models more acceptable relative to overkill.
- *
- * The aggregate (sum of model dimensions) serves as a cost proxy: more capable models
- * tend to be more expensive and slower, so preferring a lower aggregate when
- * requirements are met saves resources.
  */
 const OVERKILL_WEIGHT = 1.5;
 const DEFICIT_WEIGHT = 2.0;
@@ -101,7 +152,8 @@ export function reasoningToThinking(reasoningScore: number | undefined): Thinkin
  * - Capped base reward: min(model, task) × task — only counts what the task needs
  * - Overkill penalty: linear penalty for exceeding requirements (OVERKILL_WEIGHT)
  * - Deficit penalty: quadratic penalty for falling short (DEFICIT_WEIGHT)
- * - Cost subtraction: linear penalty proportional to model aggregate (COST_WEIGHT)
+ * - Cost subtraction: linear penalty proportional to explicit cost when present,
+ *   else the capability aggregate (COST_WEIGHT)
  */
 export function computeFitness(taskScores: TaskScores, profile: ModelProfile): number {
 	let fitness = 0;
@@ -118,7 +170,7 @@ export function computeFitness(taskScores: TaskScores, profile: ModelProfile): n
 		fitness -= DEFICIT_WEIGHT * deficit * deficit;   // quadratic penalty for falling short
 	}
 
-	const cost = DIMENSIONS.reduce((sum, d) => sum + profile[d], 0);
+	const cost = profile.cost ?? DIMENSIONS.reduce((sum, d) => sum + profile[d], 0);
 	fitness -= COST_WEIGHT * cost;
 
 	return fitness;
@@ -208,7 +260,17 @@ export function selectModel(
 	return { modelId: pool[pick], pool, fitScores, thinkingLevel };
 }
 
-export function loadSelectionConfig(configPath: string): SelectionConfig {
-	const raw = readFileSync(configPath, "utf-8");
+/**
+ * Load model selection config, preferring YAML (cleaner to edit with comments)
+ * but falling back to JSON for backward compatibility.
+ */
+export function loadSelectionConfig(jsonPath: string): SelectionConfig {
+	const yamlPath = jsonPath.replace(/\.json$/, ".yaml");
+	const parseYaml = getYamlParse();
+	if (parseYaml && existsSync(yamlPath)) {
+		const raw = readFileSync(yamlPath, "utf-8");
+		return parseYaml(raw) as SelectionConfig;
+	}
+	const raw = readFileSync(jsonPath, "utf-8");
 	return JSON.parse(raw) as SelectionConfig;
 }

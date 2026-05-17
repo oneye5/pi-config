@@ -132,3 +132,44 @@ test('getSessionTabRunBadge highlights open and unrated runs', () => {
     scored: true,
   }), null);
 });
+
+test('run-state helpers handle queued states and unknown statuses defensively', () => {
+  assert.deepEqual(getComposerRunControls({
+    runId: 'run-open-queued',
+    status: 'open',
+    scored: false,
+    nextSendStartsNewTask: true,
+  }), {
+    status: {
+      text: 'New task queued',
+      tone: 'subtle',
+      title: 'The next send will close the current run and start a new task group.',
+    },
+    action: COMPOSER_MARK_DONE_ACTION,
+  });
+
+  assert.deepEqual(getComposerRunControls({
+    runId: 'run-closed-queued',
+    status: 'closed_unscored',
+    scored: false,
+    nextSendStartsNewTask: true,
+  }), {
+    status: {
+      text: 'New task queued',
+      tone: 'subtle',
+      title: 'The next send will start a new task group after this completed run.',
+    },
+    action: COMPOSER_MARK_DONE_ACTION,
+  });
+
+  assert.deepEqual(getSessionTabRunMenuItems({
+    runId: 'run-unknown',
+    status: 'mystery' as never,
+    scored: false,
+  }), []);
+  assert.deepEqual(getComposerRunControls({
+    runId: 'run-unknown',
+    status: 'mystery' as never,
+    scored: false,
+  }), { status: null, action: null });
+});

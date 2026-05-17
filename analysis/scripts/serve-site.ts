@@ -26,6 +26,7 @@ const SITE_ROOT = fileURLToPath(new URL('../site', import.meta.url));
 const ANALYSIS_ROOT = path.resolve(SITE_ROOT, '..');
 const WORKSPACE_ROOT = path.resolve(ANALYSIS_ROOT, '..');
 const DEFAULT_OUTCOMES_ROOT = path.join(WORKSPACE_ROOT, 'data', 'outcomes');
+const DEFAULT_PORT = 4173;
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -34,6 +35,8 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
 };
 
 async function canServeExistingSiteData(outputDir: string): Promise<boolean> {
@@ -138,7 +141,7 @@ async function main(): Promise<void> {
 
   await refreshSiteDataForServe(options);
 
-  const port = options.port ?? 4173;
+  const port = options.port ?? DEFAULT_PORT;
   const server = http.createServer(async (request, response) => {
     try {
       const filePath = resolveSiteRequestPath(SITE_ROOT, request.url ?? '/');

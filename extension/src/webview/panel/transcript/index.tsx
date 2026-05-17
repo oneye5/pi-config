@@ -1,9 +1,13 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource preact */
 
+// Side-effect: register all built-in row and tool renderers
+import './register-builtins';
+
 import type {
   ChatMessage,
   ChatPrefs,
+  PruningResult,
   SystemPromptEntry,
   TranscriptWindow,
 } from '../../../shared/protocol';
@@ -43,6 +47,7 @@ interface TranscriptViewProps {
   overlay: Overlay;
   prefs: ChatPrefs;
   systemPrompts: SystemPromptEntry[];
+  pruningResult: PruningResult | null;
   workingDirectory: string | null;
   editingId: string | null;
   onEditRequest: (messageId: string) => void;
@@ -63,6 +68,7 @@ export function TranscriptView({
   overlay,
   prefs,
   systemPrompts,
+  pruningResult,
   workingDirectory,
   editingId,
   onEditRequest,
@@ -95,6 +101,7 @@ export function TranscriptView({
       overlay={overlay}
       prefs={prefs}
       systemPrompts={systemPrompts}
+      pruningResult={pruningResult}
       workingDirectory={workingDirectory}
       editingId={editingId}
       onEditRequest={onEditRequest}

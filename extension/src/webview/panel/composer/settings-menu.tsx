@@ -3,17 +3,25 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 
-import type { ChatPrefs, ExtensionInfo, ModelInfo } from '../../../shared/protocol';
+import type { ChatPrefs, ExtensionInfo, ModelInfo, PruningMode, PruningSettings } from '../../../shared/protocol';
 import { CHAT_PREF_MENU_SECTIONS, setExtensionEnabled, setProviderEnabled, toggleChatPref } from '../chat-prefs';
+
+const PRUNING_MODE_OPTIONS: { value: PruningMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'shadow', label: 'Shadow' },
+  { value: 'off', label: 'Off' },
+];
 
 interface ComposerSettingsMenuProps {
   prefs: ChatPrefs;
+  pruningSettings: PruningSettings;
   availableExtensions: ExtensionInfo[];
   availableModels: ModelInfo[];
   onSetPrefs: (prefs: Partial<ChatPrefs>) => void;
+  onSetPruningSettings: (settings: Partial<PruningSettings>) => void;
 }
 
-export function ComposerSettingsMenu({ prefs, availableExtensions, availableModels, onSetPrefs }: ComposerSettingsMenuProps) {
+export function ComposerSettingsMenu({ prefs, pruningSettings, availableExtensions, availableModels, onSetPrefs, onSetPruningSettings }: ComposerSettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -148,6 +156,76 @@ export function ComposerSettingsMenu({ prefs, availableExtensions, availableMode
               </div>
             </div>
           )}
+          <div key="pruning" class="toolbar-settings-section">
+            <div class="toolbar-settings-section-label">Pruning</div>
+            <div class="toolbar-settings-list">
+              <button
+                class={`toolbar-settings-item${prefs.showPruningMessages ? ' checked' : ''}`}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={prefs.showPruningMessages}
+                onClick={() => onSetPrefs(toggleChatPref(prefs, 'showPruningMessages'))}
+              >
+                <span class="toolbar-settings-item-check" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style={prefs.showPruningMessages ? '' : 'opacity:0'}>
+                    <polyline points="2.5,6.5 5,9 10.5,3.5" />
+                  </svg>
+                </span>
+                <span class="toolbar-settings-item-label">Show pruning summary</span>
+              </button>
+              <div class="toolbar-settings-item toolbar-settings-mode-row">
+                <span class="toolbar-settings-item-label">Mode</span>
+                <select
+                  class="toolbar-settings-select"
+                  value={pruningSettings.mode}
+                  onChange={(e) => onSetPruningSettings({ mode: (e.target as HTMLSelectElement).value as PruningMode })}
+                  aria-label="Pruning mode"
+                >
+                  {PRUNING_MODE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="toolbar-settings-item toolbar-settings-stepper-row">
+                <span class="toolbar-settings-item-label">Skill limit</span>
+                <div class="toolbar-settings-stepper">
+                  <button
+                    type="button"
+                    class="toolbar-settings-stepper-btn"
+                    aria-label="Decrease skill limit"
+                    disabled={pruningSettings.skillCeiling <= 1}
+                    onClick={() => onSetPruningSettings({ skillCeiling: Math.max(1, pruningSettings.skillCeiling - 1) })}
+                  >−</button>
+                  <span class="toolbar-settings-stepper-value">{pruningSettings.skillCeiling}</span>
+                  <button
+                    type="button"
+                    class="toolbar-settings-stepper-btn"
+                    aria-label="Increase skill limit"
+                    onClick={() => onSetPruningSettings({ skillCeiling: pruningSettings.skillCeiling + 1 })}
+                  >+</button>
+                </div>
+              </div>
+              <div class="toolbar-settings-item toolbar-settings-stepper-row">
+                <span class="toolbar-settings-item-label">Tool limit</span>
+                <div class="toolbar-settings-stepper">
+                  <button
+                    type="button"
+                    class="toolbar-settings-stepper-btn"
+                    aria-label="Decrease tool limit"
+                    disabled={pruningSettings.toolCeiling <= 1}
+                    onClick={() => onSetPruningSettings({ toolCeiling: Math.max(1, pruningSettings.toolCeiling - 1) })}
+                  >−</button>
+                  <span class="toolbar-settings-stepper-value">{pruningSettings.toolCeiling}</span>
+                  <button
+                    type="button"
+                    class="toolbar-settings-stepper-btn"
+                    aria-label="Increase tool limit"
+                    onClick={() => onSetPruningSettings({ toolCeiling: pruningSettings.toolCeiling + 1 })}
+                  >+</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -170,3 +170,171 @@ test('prepareSourceAnalytics sets tokenEfficiency to null when lineMutationTotal
   // cacheHitRatio unaffected by line mutations
   assert.ok(r.cacheHitRatio !== null);
 });
+
+test('prepareSourceAnalytics buckets verification counts and falls back to outcome history', async () => {
+  const fixture = deepClone(await loadFixture());
+  const runWithOutcomeFallback = fixture.completedRuns[0] as any;
+  delete runWithOutcomeFallback.outcome;
+  runWithOutcomeFallback.verification.totalCount = 1;
+  runWithOutcomeFallback.verification.failureCount = 0;
+  runWithOutcomeFallback.verification.countsByKind = {
+    test: 1,
+    build: 0,
+    lint: 0,
+    typecheck: 0,
+    format: 0,
+    other: 0,
+  };
+
+  const runWithFailingVerification = fixture.completedRuns[1] as any;
+  runWithFailingVerification.verification.totalCount = 2;
+  runWithFailingVerification.verification.failureCount = 1;
+  runWithFailingVerification.verification.countsByKind = {
+    test: 2,
+    build: 0,
+    lint: 0,
+    typecheck: 0,
+    format: 0,
+    other: 0,
+  };
+
+  const runWithManyVerifications = fixture.completedRuns[2] as any;
+  runWithManyVerifications.verification.totalCount = 4;
+  runWithManyVerifications.verification.failureCount = 0;
+  runWithManyVerifications.verification.countsByKind = {
+    test: 4,
+    build: 0,
+    lint: 0,
+    typecheck: 0,
+    format: 0,
+    other: 0,
+  };
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const byId = new Map<string, PreparedRunRow>(prepared.runs.map((run) => [run.runId, run]));
+  const fallbackOutcome = fixture.outcomes.find((outcome) => outcome.runId === runWithOutcomeFallback.runId)?.outcome;
+
+  assert.equal(byId.get(runWithOutcomeFallback.runId)?.verificationCountBucket, '1');
+  assert.equal(byId.get(runWithOutcomeFallback.runId)?.verificationState, 'passing');
+  assert.equal(byId.get(runWithOutcomeFallback.runId)?.resolution, fallbackOutcome?.resolution ?? null);
+  assert.equal(byId.get(runWithOutcomeFallback.runId)?.satisfaction, fallbackOutcome?.satisfaction ?? null);
+
+  assert.equal(byId.get(runWithFailingVerification.runId)?.verificationCountBucket, '2-3');
+  assert.equal(byId.get(runWithFailingVerification.runId)?.verificationState, 'failing');
+
+  assert.equal(byId.get(runWithManyVerifications.runId)?.verificationCountBucket, '4+');
+  assert.equal(byId.get(runWithManyVerifications.runId)?.verificationState, 'passing');
+});
+
+test('prepareSourceAnalytics prefers newer same-status duplicates and later ties', async () => {
+  const fixture = deepClone(await loadFixture());
+  const template = deepClone((fixture.openRuns[0] ?? fixture.completedRuns[0]) as any);
+  const duplicateBase = {
+    ...template,
+    runId: 'duplicate-open-run',
+    taskGroupId: 'duplicate-open-task',
+    status: 'open',
+    scored: false,
+    outcome: undefined,
+    finalizationReason: undefined,
+    finalizedAt: undefined,
+    updatedAt: 'not-a-timestamp',
+    assistantTurnCount: 7,
+  };
+  const newerDuplicate = {
+    ...duplicateBase,
+    updatedAt: '2026-05-12T00:00:00.000Z',
+    assistantTurnCount: 11,
+  };
+  const laterTieDuplicate = {
+    ...newerDuplicate,
+    assistantTurnCount: 19,
+  };
+
+  fixture.openRuns.push(duplicateBase, newerDuplicate, laterTieDuplicate);
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const matchingRuns = prepared.runs.filter((run) => run.runId === duplicateBase.runId);
+
+  assert.equal(matchingRuns.length, 1);
+  assert.equal(matchingRuns[0]?.assistantTurnCount, 19, 'later identical-status duplicate should win ties');
+  assert.equal(matchingRuns[0]?.updatedAt, '2026-05-12T00:00:00.000Z');
+});
+
+test('prepareSourceAnalytics computes execution failures and unknown fallback failures', async () => {
+  const fixture = deepClone(await loadFixture());
+  const classifiedRun = fixture.completedRuns[0] as any;
+  classifiedRun.toolUsage.countsByName = { bash: 5, edit: 2 };
+  classifiedRun.toolUsage.failureCountsByName = { bash: 5, edit: 2 };
+  classifiedRun.toolUsage.failureCountsByNameAndKind = {
+    bash: {
+      verification_project_failure: 2,
+      probe_no_match: 1,
+      shell_command_error: 2,
+    },
+  };
+
+  const fallbackRun = fixture.completedRuns[1] as any;
+  fallbackRun.toolUsage.failureCount = 3;
+  fallbackRun.toolUsage.failureCountsByName = { bash: 2, read: 1 };
+  fallbackRun.toolUsage.failureCountsByKind = { timeout: 1 };
+  fallbackRun.toolUsage.failureCountsByNameAndKind = {};
+  fallbackRun.toolUsage.failureSamples = [];
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const classifiedBashUsage = prepared.toolUsage.find((row) => row.runId === classifiedRun.runId && row.toolName === 'bash');
+  const classifiedEditUsage = prepared.toolUsage.find((row) => row.runId === classifiedRun.runId && row.toolName === 'edit');
+  const fallbackUnknownRows = prepared.toolFailures
+    .filter((row) => row.runId === fallbackRun.runId && row.failureKind === 'unknown')
+    .map((row) => [row.toolName, row.count] as const)
+    .sort(([left], [right]) => left.localeCompare(right));
+
+  assert.equal(classifiedBashUsage?.executionFailureCount, 2);
+  assert.equal(classifiedEditUsage?.executionFailureCount, 0);
+  assert.deepEqual(fallbackUnknownRows, [['bash', 2], ['read', 1]]);
+});
+
+test('prepareSourceAnalytics trims backend errors and skips empty file-extension rollups', async () => {
+  const fixture = deepClone(await loadFixture());
+  const runWithBlankBackendErrors = fixture.completedRuns[0] as any;
+  runWithBlankBackendErrors.backendErrorCodes = [' ECONNRESET ', ' ', 'ECONNRESET', '\t'];
+  runWithBlankBackendErrors.fileExtensions = {
+    readCountsByExtension: {},
+    writeCountsByExtension: {},
+    editCountsByExtension: {},
+  };
+
+  const runWithoutFileExtensions = fixture.completedRuns[1] as any;
+  runWithoutFileExtensions.fileExtensions = null;
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const backendRows = prepared.backendErrors
+    .filter((row) => row.runId === runWithBlankBackendErrors.runId)
+    .map((row) => [row.errorCode, row.count] as const);
+
+  assert.deepEqual(backendRows, [['ECONNRESET', 2]]);
+  assert.ok(!prepared.fileExtensions.some((row) => row.runId === runWithBlankBackendErrors.runId));
+  assert.ok(!prepared.fileExtensions.some((row) => row.runId === runWithoutFileExtensions.runId));
+});
+
+test('prepareSourceAnalytics normalizes all supported thinking levels and blank values', async () => {
+  const fixture = deepClone(await loadFixture());
+  const targetRuns = [...fixture.completedRuns.slice(0, 7), fixture.openRuns[0]!];
+  const expectedLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', '   '] as const;
+
+  expectedLevels.forEach((level, index) => {
+    (targetRuns[index] as any).thinkingLevel = level;
+  });
+
+  const prepared = prepareSourceAnalytics(fixture);
+  const byId = new Map<string, PreparedRunRow>(prepared.runs.map((run) => [run.runId, run]));
+
+  assert.equal(byId.get(targetRuns[0]!.runId)?.thinkingLevel, 'off');
+  assert.equal(byId.get(targetRuns[1]!.runId)?.thinkingLevel, 'minimal');
+  assert.equal(byId.get(targetRuns[2]!.runId)?.thinkingLevel, 'low');
+  assert.equal(byId.get(targetRuns[3]!.runId)?.thinkingLevel, 'medium');
+  assert.equal(byId.get(targetRuns[4]!.runId)?.thinkingLevel, 'high');
+  assert.equal(byId.get(targetRuns[5]!.runId)?.thinkingLevel, 'xhigh');
+  assert.equal(byId.get(targetRuns[6]!.runId)?.thinkingLevel, 'xhigh');
+  assert.equal(byId.get(targetRuns[7]!.runId)?.thinkingLevel, null);
+});

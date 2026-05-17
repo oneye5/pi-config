@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { validateWebviewToHostMessage } from '../src/shared/protocol-validation';
 
 test('validateWebviewToHostMessage accepts the simple no-payload messages', () => {
-  for (const type of ['ready', 'refreshState', 'requestSnapshot', 'openFilePicker', 'interrupt', 'newSession']) {
+  for (const type of ['ready', 'refreshState', 'requestSnapshot', 'openFilePicker', 'newSession']) {
     const result = validateWebviewToHostMessage({ type });
     assert.equal(result.ok, true, `${type} should validate`);
   }
@@ -27,9 +27,10 @@ test('validateWebviewToHostMessage rejects unknown message types', () => {
 });
 
 test('validateWebviewToHostMessage validates send payloads', () => {
-  assert.equal(validateWebviewToHostMessage({ type: 'send', text: 'hi' }).ok, true);
-  assert.equal(validateWebviewToHostMessage({ type: 'send' }).ok, false);
-  assert.equal(validateWebviewToHostMessage({ type: 'send', text: 42 }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'send', sessionPath: '/a', text: 'hi' }).ok, true);
+  assert.equal(validateWebviewToHostMessage({ type: 'send', text: 'hi' }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'send', sessionPath: '/a' }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'send', sessionPath: '/a', text: 42 }).ok, false);
 });
 
 test('validateWebviewToHostMessage validates openFile', () => {
@@ -38,7 +39,7 @@ test('validateWebviewToHostMessage validates openFile', () => {
 });
 
 test('validateWebviewToHostMessage validates session-scoped messages with required sessionPath', () => {
-  for (const type of ['openSession', 'closeSession', 'startNewTask', 'continueTask']) {
+  for (const type of ['openSession', 'closeSession', 'interrupt', 'startNewTask', 'continueTask']) {
     assert.equal(
       validateWebviewToHostMessage({ type, sessionPath: '/a' }).ok,
       true,
@@ -54,11 +55,12 @@ test('validateWebviewToHostMessage validates session-scoped messages with requir
 
 test('validateWebviewToHostMessage validates editMessage payloads', () => {
   assert.equal(
-    validateWebviewToHostMessage({ type: 'editMessage', messageId: 'm1', text: 'edited' }).ok,
+    validateWebviewToHostMessage({ type: 'editMessage', sessionPath: '/a', messageId: 'm1', text: 'edited' }).ok,
     true,
   );
-  assert.equal(validateWebviewToHostMessage({ type: 'editMessage', messageId: 'm1' }).ok, false);
-  assert.equal(validateWebviewToHostMessage({ type: 'editMessage', text: 'x' }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'editMessage', messageId: 'm1', text: 'edited' }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'editMessage', sessionPath: '/a', messageId: 'm1' }).ok, false);
+  assert.equal(validateWebviewToHostMessage({ type: 'editMessage', sessionPath: '/a', text: 'x' }).ok, false);
 });
 
 test('validateWebviewToHostMessage validates moveSessionTab', () => {

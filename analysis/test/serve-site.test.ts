@@ -35,3 +35,28 @@ test('resolveSiteRequestPath rejects unapproved or escaped data paths', () => {
     /Invalid path/,
   );
 });
+
+test('resolveSiteRequestPath serves non-data assets and strips query strings', () => {
+  assert.equal(
+    resolveSiteRequestPath(SITE_ROOT, '/dist/app.js?cache=1'),
+    path.resolve(SITE_ROOT, 'dist', 'app.js'),
+  );
+});
+
+test('resolveSiteRequestPath rejects nested data paths after decoding', () => {
+  assert.throws(
+    () => resolveSiteRequestPath(SITE_ROOT, '/data/nested/manifest.json'),
+    /Not found/,
+  );
+  assert.throws(
+    () => resolveSiteRequestPath(SITE_ROOT, '/data%2Fnested%2Fmanifest.json'),
+    /Not found/,
+  );
+});
+
+test('resolveSiteRequestPath rejects cross-drive absolute paths on Windows', { skip: process.platform !== 'win32' }, () => {
+  assert.throws(
+    () => resolveSiteRequestPath('C:\\site-root', 'D:/outside.txt'),
+    /Invalid path/,
+  );
+});

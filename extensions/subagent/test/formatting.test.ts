@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as os from "node:os";
 import {
 	formatTokens,
 	formatUsageStats,
@@ -63,6 +64,15 @@ test("formatUsageStats: includes cache stats when present", () => {
 	assert.match(result, /W500/);
 });
 
+test("formatUsageStats: uses singular turn label and skips non-positive context", () => {
+	const result = formatUsageStats(
+		{ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1, contextTokens: 0 },
+	);
+	assert.match(result, /1 turn/);
+	assert.doesNotMatch(result, /1 turns/);
+	assert.doesNotMatch(result, /ctx:/);
+});
+
 // --- getFinalOutput ---
 
 test("getFinalOutput returns last assistant text", () => {
@@ -94,6 +104,14 @@ test("getFinalOutput skips tool-call-only assistant messages", () => {
 		},
 	];
 	assert.equal(getFinalOutput(messages), "");
+});
+
+test("getFinalOutput scans backward to earlier assistant text when latest has none", () => {
+	const messages: Message[] = [
+		{ role: "assistant", content: [{ type: "text", text: "earlier answer" }], model: "m" },
+		{ role: "assistant", content: [{ type: "toolCall", name: "read", arguments: { path: "a" } }], model: "m" },
+	];
+	assert.equal(getFinalOutput(messages), "earlier answer");
 });
 
 // --- getDisplayItems ---
@@ -179,6 +197,47 @@ test("formatToolCall: unknown tool shows JSON args", () => {
 	assert.match(result, /foo/);
 });
 
+test("formatToolCall: supports ls/find/grep helpers", () => {
+	assert.match(formatToolCall("ls", { path: "/tmp" }, fg), /ls/);
+	assert.match(formatToolCall("find", { pattern: "*.ts", path: "/repo" }, fg), /\*\.ts/);
+	assert.match(formatToolCall("grep", { pattern: "TODO", path: "/repo" }, fg), /\/TODO\//);
+});
+
+test("formatToolCall: shortens home paths and handles read limit without offset", () => {
+	const home = os.homedir();
+	const target = `${home}/project/file.ts`;
+
+	const readResult = formatToolCall("read", { path: target, limit: 3 }, fg);
+	assert.match(readResult, /~\//);
+	assert.match(readResult, /:1-3/);
+
+	const writeResult = formatToolCall("write", { path: target, content: "single line" }, fg);
+	assert.match(writeResult, /~\//);
+	assert.doesNotMatch(writeResult, /lines\)/);
+});
+
+test("formatToolCall: unknown tool truncates very long argument previews", () => {
+	const result = formatToolCall("custom-tool", { payload: "x".repeat(200) }, fg);
+	assert.match(result, /\.\.\./);
+});
+
+test("formatToolCall: uses fallback defaults when arguments are omitted", () => {
+	assert.match(formatToolCall("bash", {}, fg), /\.\.\./);
+	assert.match(formatToolCall("read", {}, fg), /\.\.\./);
+	assert.match(formatToolCall("ls", {}, fg), /\./);
+	assert.match(formatToolCall("find", {}, fg), /\*/);
+	assert.match(formatToolCall("grep", {}, fg), /\/\//);
+});
+
+test("formatToolCall: supports path-only edit/read variants", () => {
+	const editResult = formatToolCall("edit", { path: "/tmp/file.ts" }, fg);
+	assert.match(editResult, /file\.ts/);
+
+	const readOffsetOnly = formatToolCall("read", { path: "/tmp/file.ts", offset: 7 }, fg);
+	assert.match(readOffsetOnly, /:7/);
+	assert.doesNotMatch(readOffsetOnly, /-\d+/);
+});
+
 // --- formatSelectionInfo ---
 
 test("formatSelectionInfo returns undefined when no scores or model", () => {
@@ -250,4 +309,42 @@ test("formatSelectionInfo hides fallback info when no failed model", () => {
 	);
 	assert.ok(result);
 	assert.ok(!result!.includes("fallback"));
+});
+
+test("formatSelectionInfo handles missing peer score and includes diagnostics", () => {
+	const result = formatSelectionInfo(
+		{
+			selectedModel: "model-a:cloud",
+			selectionPool: ["model-a:cloud", "model-b:local"],
+			selectionFitScores: [9.2],
+			failedModel: "model-z:cloud",
+			retryCount: 2,
+			modelResolutionDiagnostic: "model override not found",
+		},
+		fg,
+	);
+	assert.ok(result);
+	assert.match(result!, /model-a\(9\.2\)/);
+	assert.match(result!, /\| model-b/);
+	assert.ok(!result!.includes("model-b("), "missing score should omit parentheses");
+	assert.match(result!, /fallback #2/);
+	assert.match(result!, /model override not found/);
+});
+
+test("formatSelectionInfo returns undefined when task score object has no dimensions", () => {
+	assert.equal(formatSelectionInfo({ taskScores: {} }, fg), undefined);
+});
+
+test("formatSelectionInfo handles selected model missing from pool", () => {
+	const result = formatSelectionInfo(
+		{
+			selectedModel: "chosen:local",
+			selectionPool: ["other:cloud"],
+			selectionFitScores: [4.4],
+		},
+		fg,
+	);
+	assert.ok(result);
+	assert.match(result!, /chosen/);
+	assert.ok(!result!.includes("chosen("), "missing score should omit selected-model parentheses");
 });

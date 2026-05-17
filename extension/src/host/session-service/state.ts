@@ -77,6 +77,7 @@ export class SessionServiceState {
     pendingPath?: string,
     wasOpenTab = false,
     insertedPlaceholder = false,
+    requestEpoch?: number,
   ): string {
     this.selectionRequestCounter += 1;
     const token = `selection:${this.selectionRequestCounter}`;
@@ -87,6 +88,7 @@ export class SessionServiceState {
       pendingPath,
       previousActivePath: selectActiveSessionPath(store.getState()),
       wasOpenTab,
+      requestEpoch,
     });
     this.currentSelectionToken = token;
     return token;

@@ -6,8 +6,8 @@ A personal stack built around the [`pi` coding agent](https://www.npmjs.com/pack
 
 | Path | What it is | Distribution |
 |---|---|---|
-| [`extension/`](extension) | *pie* — VS Code sidebar extension that surfaces a `pi` agent as chat | Source build today; CI-built VSIX planned |
-| [`extensions/subagent/`](extensions/subagent), [`extensions/cwd-skills/`](extensions/cwd-skills) | Reusable pi plugins (subagent delegation, cwd-scoped skill discovery) | Loaded by `pi` via `settings.json` packages |
+| [`extension/`](extension) | *pie* — VS Code sidebar extension that surfaces a `pi` agent as chat | Built and packaged locally from source |
+| [`extensions/subagent/`](extensions/subagent), [`extensions/cwd-skills/`](extensions/cwd-skills), [`extensions/skill-pruner/`](extensions/skill-pruner) | Reusable pi plugins (subagent delegation, cwd-scoped skill discovery, skill pruning) | Loaded by `pi` via `settings.json` packages |
 | [`analysis/`](analysis) | Local DuckDB + static-site workspace for run analytics | Internal research tool |
 | [`agents/`](agents), [`skills/`](skills), [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md), [`settings.json`](settings.json) | Maintainer's personal pi config | Reference / example only |
 | [`data/`](data), [`pie/`](pie), [`auth.json`](#) | Local runtime/auth data | Local-only; excluded from the portable config |
@@ -49,6 +49,19 @@ The macOS/Linux script currently does the essentials (env var, auth migration, `
 Both installers are idempotent: re-running updates/repairs rather than duplicating state.
 
 ## Quick start
+
+### Run repo-wide tests
+
+```bash
+# from repo root; Node 24+ recommended because this includes analysis/
+npm run test
+
+# scope to one package when you only touched part of the repo
+npm run test -- --package extension
+npm run test -- --package subagent
+```
+
+`npm run test` is the canonical repo-wide test runner. It runs each package in isolation, prints only per-package summaries plus exact failures, and enforces package-level line/branch coverage gates.
 
 ### Build the pie VS Code extension
 
