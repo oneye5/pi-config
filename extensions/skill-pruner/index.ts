@@ -340,7 +340,10 @@ interface ToolPruningResult {
 // --- Helper functions ---
 
 function getConfig(): PruningConfig {
-	return config ?? loadConfig(path.join(CONFIG_ROOT, "settings.json"));
+	if (!config) {
+		config = loadConfig(path.join(CONFIG_ROOT, "settings.json"));
+	}
+	return config;
 }
 
 function getSessionId(ctx: unknown): string {

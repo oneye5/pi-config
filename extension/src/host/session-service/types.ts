@@ -2,7 +2,7 @@ import type { SessionCompletionEvent } from '../completion-notification';
 import type { PatchOp, HostToWebviewMessage } from '../../shared/protocol';
 
 export type ScheduleRender = () => void;
-export type PostPatch = (op: PatchOp) => void;
+export type PostPatch = (sessionPath: string, op: PatchOp) => void;
 export type PostImperative = (message: HostToWebviewMessage) => void;
 export type OnSessionCompleted = (event: SessionCompletionEvent) => void;
 

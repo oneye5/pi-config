@@ -14,7 +14,7 @@ import type {
   WebviewToHostMessage,
 } from '../../shared/protocol';
 import { DEFAULT_CHAT_PREFS, EMPTY_TRANSCRIPT_WINDOW } from '../../shared/protocol';
-import { emptyOverlay, applyPatch } from './overlay';
+import { emptyOverlay, type Overlay } from './overlay';
 import { FileChangesPanel } from './file-changes-panel';
 import { resolvePanelSurface } from './panel-state';
 import { StreamSmoother } from './stream-smoother';
@@ -149,8 +149,13 @@ export function App({ adapter }: { adapter: AppAdapter }) {
   const [draftRestore, setDraftRestore] = useState<{ text: string; nonce: number } | null>(null);
   const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
 
-  // Stream smoother for gradual character emission
-  const smootherRef = useRef<StreamSmoother | null>(null);
+  // Per-session stream smoothers for gradual character emission. The rendered
+  // `overlay` state is bound to the active session; background sessions update
+  // their own overlays in `overlaysRef` without re-rendering.
+  const overlaysRef = useRef<Map<string, Overlay>>(new Map());
+  const smoothersRef = useRef<Map<string, StreamSmoother>>(new Map());
+  // Per-session revision tracking. Replaces the old single `lastRevisionRef`.
+  const revisionMapRef = useRef<Map<string, number>>(new Map());
 
   // Token rate tracking: rolling window of output token samples
   const RATE_WINDOW_SECONDS = 10;
@@ -160,8 +165,6 @@ export function App({ adapter }: { adapter: AppAdapter }) {
     windowSeconds: RATE_WINDOW_SECONDS,
   });
 
-  // Track last revision via ref (not state) to avoid triggering snapshot requests on every re-render
-  const lastRevisionRef = useRef(0);
   const awaitingSnapshotRef = useRef(false);
   const hostInstanceIdRef = useRef('');
   const activeSessionPathRef = useRef<string | null>(null);
@@ -175,22 +178,46 @@ export function App({ adapter }: { adapter: AppAdapter }) {
     setShowOutcomeDialog(false);
   }, []);
 
-  useEffect(() => {
-    smootherRef.current = new StreamSmoother(
-      {},
-      (newOverlay) => setOverlay(newOverlay),
-    );
-    return () => smootherRef.current?.reset();
+  // Per-session smoothers are created lazily. The smoother callback updates
+  // the session's overlay in `overlaysRef`; when the session is active we also
+  // mirror to React state so the transcript re-renders.
+  const getOrCreateSmoother = useCallback((sessionPath: string): StreamSmoother => {
+    const existing = smoothersRef.current.get(sessionPath);
+    if (existing) return existing;
+    const smoother = new StreamSmoother({}, (next) => {
+      overlaysRef.current.set(sessionPath, next);
+      if (sessionPath === activeSessionPathRef.current) {
+        setOverlay(next);
+      }
+    });
+    smoothersRef.current.set(sessionPath, smoother);
+    return smoother;
   }, []);
+
+  const resetAllPerSessionState = useCallback(() => {
+    for (const smoother of smoothersRef.current.values()) {
+      smoother.flushAll();
+      smoother.reset();
+    }
+    smoothersRef.current.clear();
+    overlaysRef.current.clear();
+    revisionMapRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    return () => resetAllPerSessionState();
+  }, [resetAllPerSessionState]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const msg = event.data as HostToWebviewMessage;
 
       if (msg.type === 'state') {
-        // Flush any pending smoothed content when state changes
-        smootherRef.current?.flushAll();
-        smootherRef.current?.reset();
+        // A state envelope is authoritative: drop all per-session bookkeeping
+        // and rebuild from the snapshot. Background overlays are dropped
+        // because the host store has already merged any streamed deltas into
+        // the committed transcript.
+        resetAllPerSessionState();
         const hostChanged = hostInstanceIdRef.current && msg.hostInstanceId !== hostInstanceIdRef.current;
         const nextActiveSessionPath = msg.state.activeSession?.path ?? null;
         const sessionChanged = committedSessionPathRef.current !== null && committedSessionPathRef.current !== nextActiveSessionPath;
@@ -198,14 +225,10 @@ export function App({ adapter }: { adapter: AppAdapter }) {
           ? pendingDraftRestoreRef.current.get(nextActiveSessionPath) ?? null
           : null;
 
-        if (hostChanged) {
-          lastRevisionRef.current = 0;
-        }
         awaitingSnapshotRef.current = false;
         hostInstanceIdRef.current = msg.hostInstanceId;
         activeSessionPathRef.current = nextActiveSessionPath;
         committedSessionPathRef.current = nextActiveSessionPath;
-        lastRevisionRef.current = msg.revision;
         if (hostChanged || sessionChanged) {
           clearTransientUi();
           tokenRateRef.current = [];
@@ -223,34 +246,41 @@ export function App({ adapter }: { adapter: AppAdapter }) {
       if (msg.type === 'patch') {
         if (hostInstanceIdRef.current && msg.hostInstanceId !== hostInstanceIdRef.current) {
           hostInstanceIdRef.current = msg.hostInstanceId;
-          lastRevisionRef.current = 0;
+          resetAllPerSessionState();
           awaitingSnapshotRef.current = true;
           clearTransientUi();
           setOverlay(emptyOverlay());
           postMessage({ type: 'requestSnapshot' });
           return;
         }
-        if (msg.revision <= lastRevisionRef.current) {
+
+        const sessionPath = msg.sessionPath;
+        const prevRevision = revisionMapRef.current.get(sessionPath) ?? 0;
+
+        if (msg.revision <= prevRevision) {
           return;
         }
-        const expected = lastRevisionRef.current + 1;
-        if (awaitingSnapshotRef.current || (lastRevisionRef.current > 0 && msg.revision !== expected)) {
+        const expected = prevRevision + 1;
+        if (awaitingSnapshotRef.current || (prevRevision > 0 && msg.revision !== expected)) {
           if (!awaitingSnapshotRef.current) {
             postMessage({ type: 'requestSnapshot' });
           }
           awaitingSnapshotRef.current = true;
           return;
         }
-        lastRevisionRef.current = msg.revision;
-        // Use smoother for message deltas to create gradual character streaming
-        const smoother = smootherRef.current;
-        if (smoother) {
-          setOverlay(smoother.processPatch(msg.op));
-        } else {
-          setOverlay((prev) => applyPatch(prev, msg.op));
+        revisionMapRef.current.set(sessionPath, msg.revision);
+
+        // Apply patch through the session's smoother. The smoother's onFlush
+        // callback updates `overlaysRef` and mirrors to React state when this
+        // session is the active one.
+        const smoother = getOrCreateSmoother(sessionPath);
+        const nextOverlay = smoother.processPatch(msg.op);
+        overlaysRef.current.set(sessionPath, nextOverlay);
+        if (sessionPath === activeSessionPathRef.current) {
+          setOverlay(nextOverlay);
         }
-        // Track output token rate from streaming deltas
-        if (msg.op.kind === 'messageDelta') {
+        // Track output token rate from streaming deltas (active session only).
+        if (msg.op.kind === 'messageDelta' && sessionPath === activeSessionPathRef.current) {
           const now = Date.now();
           const chars = msg.op.delta.length;
           // Rough estimate: ~4 chars per token for typical English output
@@ -288,7 +318,7 @@ export function App({ adapter }: { adapter: AppAdapter }) {
     window.addEventListener('message', handleMessage);
     postMessage({ type: 'ready' });
     return () => window.removeEventListener('message', handleMessage);
-  }, [clearTransientUi, postMessage]);
+  }, [clearTransientUi, getOrCreateSmoother, postMessage, resetAllPerSessionState]);
 
   useEffect(() => {
     const refreshState = () => postMessage({ type: 'refreshState' });

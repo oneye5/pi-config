@@ -278,6 +278,11 @@ export class SessionMessageActions {
     }
   }
 
+  /**
+   * @deprecated Phase 3 migration: interrupt is now routed through the CQRS
+   * reducer + EffectRunner in extension-host.ts. This method remains only as a
+   * fallback until all callers are verified removed. See ARCH-MIGRATION-PLAN.md §Phase 3.
+   */
   async interrupt(requestedSessionPath: string): Promise<void> {
     const sessionPath = this.requireOpenSessionPath('interrupt', requestedSessionPath);
     if (!sessionPath) {

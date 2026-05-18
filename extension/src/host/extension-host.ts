@@ -30,6 +30,10 @@ import { SidebarViewProvider } from './sidebar-provider';
 import { SessionService } from './session-service';
 import { StatsService } from './stats-service';
 import type { WebviewToHostMessage } from '../shared/protocol';
+import { EffectRunner } from './core/effect-runner';
+import { reducer, initialArchState, type ArchState } from './core/reducer';
+import type { Event } from './core/events';
+import { auditLog } from './state-audit';
 
 export const SIDEBAR_VIEW_TYPE = 'pie.sessionsView';
 
@@ -82,6 +86,10 @@ export class PieExtension implements vscode.Disposable {
   private readonly service: SessionService;
   private shutdownPromise: Promise<void> | null = null;
 
+  // Phase 3: CQRS architecture spine
+  private archState: ArchState = initialArchState;
+  private readonly effectRunner: EffectRunner;
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly backend: BackendClient,
@@ -104,7 +112,7 @@ export class PieExtension implements vscode.Disposable {
       context,
       backend,
       () => this.scheduleRender(),
-      (op) => this.sidebarProvider.postPatch(op),
+      (sessionPath, op) => this.sidebarProvider.postPatch(sessionPath, op),
       (message) => this.sidebarProvider.postImperative(message),
       (event) => {
         this.handleSessionCompleted(event);
@@ -120,6 +128,23 @@ export class PieExtension implements vscode.Disposable {
       },
     );
 
+    this.effectRunner = new EffectRunner({
+      backend: this.backend,
+      queues: this.service.queues,
+      tabs: {
+        async persistTabs() {
+          // PersistTabs not yet wired — Phase 4+.
+        },
+      },
+      log: {
+        log: (level, message, data) => {
+          auditLog(context, 'arch-effect-runner', message, (data as Record<string, unknown>) ?? {});
+          if (level === 'error') console.error('[arch]', message, data);
+        },
+      },
+      dispatch: (event) => this.dispatchArchEvent(event),
+    });
+
     this.statusBar.command = 'pie.openChat';
     this.statusBar.show();
   }
@@ -133,6 +158,18 @@ export class PieExtension implements vscode.Disposable {
   async restart(): Promise<void> {
     this.updateStatusBar('Starting');
     await this.service.restart();
+  }
+
+  /**
+   * Phase 3: dispatch an event through the arch reducer and execute resulting effects.
+   * This is the single point where the new CQRS spine integrates with the extension.
+   */
+  private dispatchArchEvent(event: Event): void {
+    const result = reducer(this.archState, event);
+    this.archState = result.state;
+    for (const effect of result.effects) {
+      this.effectRunner.run(effect);
+    }
   }
 
   register(): void {
@@ -454,7 +491,13 @@ export class PieExtension implements vscode.Disposable {
           this.scheduleRender();
           return;
         }
-        await this.service.interrupt(sessionPath);
+        // Phase 3: route through the CQRS reducer + effect runner.
+        const corrId = crypto.randomUUID();
+        this.dispatchArchEvent({
+          kind: 'Command',
+          cmd: { kind: 'Interrupt', corrId, sessionPath },
+        });
+        this.service.suppressNextCompletionNotificationFor(sessionPath);
         return;
       }
 

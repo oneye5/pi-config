@@ -43,7 +43,7 @@ import { SessionServiceState } from './state';
 interface SessionServiceEventsOptions {
   context: vscode.ExtensionContext;
   scheduleRender: ScheduleRender;
-  postPatch: (op: PatchOp) => void;
+  postPatch: (sessionPath: string, op: PatchOp) => void;
   onSessionCompleted?: OnSessionCompleted;
   runObserver: RunObserver;
   state: SessionServiceState;
@@ -52,7 +52,7 @@ interface SessionServiceEventsOptions {
 export class SessionServiceEvents {
   private readonly context: vscode.ExtensionContext;
   private readonly scheduleRender: ScheduleRender;
-  private readonly postPatch: (op: PatchOp) => void;
+  private readonly postPatch: (sessionPath: string, op: PatchOp) => void;
   private readonly onSessionCompleted?: OnSessionCompleted;
   private readonly runObserver: RunObserver;
   private readonly state: SessionServiceState;
@@ -274,10 +274,8 @@ export class SessionServiceEvents {
       }),
     );
 
-    if (this.state.isActiveSession(sessionPath)) {
-      const canonicalId = getCanonicalMessageId(payload.messageId, store.getState());
-      this.postPatch({ kind: 'messageDelta', messageId: canonicalId, delta: payload.delta });
-    }
+    const canonicalId = getCanonicalMessageId(payload.messageId, store.getState());
+    this.postPatch(sessionPath, { kind: 'messageDelta', messageId: canonicalId, delta: payload.delta });
   }
 
   private onMessageThinking(payload: MessageThinkingPayload): void {
@@ -294,14 +292,12 @@ export class SessionServiceEvents {
       }),
     );
 
-    if (this.state.isActiveSession(sessionPath)) {
-      const canonicalId = getCanonicalMessageId(payload.messageId, store.getState());
-      this.postPatch({
-        kind: 'messageThinking',
-        messageId: canonicalId,
-        thinking: payload.thinking,
-      });
-    }
+    const canonicalId = getCanonicalMessageId(payload.messageId, store.getState());
+    this.postPatch(sessionPath, {
+      kind: 'messageThinking',
+      messageId: canonicalId,
+      thinking: payload.thinking,
+    });
   }
 
   private onToolStarted(payload: ToolStartedPayload): void {
@@ -333,9 +329,7 @@ export class SessionServiceEvents {
       store.dispatch(fileChangesActions.addFileChange({ sessionPath, change: fileChange }));
     }
 
-    if (this.state.isActiveSession(sessionPath)) {
-      this.postPatch({ kind: 'toolCall', messageId: canonicalId, toolCall });
-    }
+    this.postPatch(sessionPath, { kind: 'toolCall', messageId: canonicalId, toolCall });
     this.state.touchSessionTranscript(sessionPath);
     this.scheduleRender();
   }
@@ -366,9 +360,7 @@ export class SessionServiceEvents {
     );
     this.runObserver.onToolFinished(sessionPath, toolCall);
 
-    if (this.state.isActiveSession(sessionPath)) {
-      this.postPatch({ kind: 'toolCall', messageId: canonicalId, toolCall });
-    }
+    this.postPatch(sessionPath, { kind: 'toolCall', messageId: canonicalId, toolCall });
     this.state.touchSessionTranscript(sessionPath);
     this.scheduleRender();
   }
@@ -398,9 +390,7 @@ export class SessionServiceEvents {
       transcriptActions.upsertToolCall({ sessionPath, messageId: canonicalId, toolCall }),
     );
 
-    if (this.state.isActiveSession(sessionPath)) {
-      this.postPatch({ kind: 'toolCall', messageId: canonicalId, toolCall });
-    }
+    this.postPatch(sessionPath, { kind: 'toolCall', messageId: canonicalId, toolCall });
     this.state.touchSessionTranscript(sessionPath);
     this.scheduleRender();
   }
@@ -422,10 +412,8 @@ export class SessionServiceEvents {
     );
     this.state.unbindRequestSessionPath(payload.requestId);
 
-    if (this.state.isActiveSession(sessionPath)) {
-      const canonicalId = getCanonicalMessageId(payload.message.id, store.getState());
-      this.postPatch({ kind: 'clearOverlay', messageIds: [canonicalId] });
-    }
+    const canonicalId = getCanonicalMessageId(payload.message.id, store.getState());
+    this.postPatch(sessionPath, { kind: 'clearOverlay', messageIds: [canonicalId] });
 
     this.state.touchSessionTranscript(sessionPath);
     this.scheduleRender();

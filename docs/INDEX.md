@@ -8,6 +8,7 @@ This folder mixes design contracts, implementation plans (some completed, some o
 
 ## Open plans (work outstanding)
 
+- [internal/ARCH-MIGRATION-PLAN.md](internal/ARCH-MIGRATION-PLAN.md) — multi-phase migration of the extension host + webview to a CQRS-shaped Elm/MVI architecture. Authoritative for all in-progress and upcoming architecture work; supersedes the prior `CHAT_UI_ARCHITECTURE.md` (now deleted).
 
 ## Completed plans (kept for context, not action items)
 

@@ -7,6 +7,7 @@ import {
   buildPatchEnvelope,
   buildStateEnvelope,
   canPostToWebview,
+  clearSessionSync,
   createSidebarSyncState,
   flushDirtySnapshot,
   type SidebarSyncState,
@@ -126,8 +127,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
   }
 
   /**
-   * Post a full state snapshot immediately. Resets the overlay revision so the
-   * webview can rebase its gap-detection counter.
+   * Post a full state snapshot immediately. Resets per-session revisions so
+   * the webview can rebase its mirrors from the snapshot.
    */
   postState(): void {
     if (this.scheduleTimer !== undefined) {
@@ -135,7 +136,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
       this.scheduleTimer = undefined;
     }
 
-    const previousRevision = this.syncState.revision;
+    const previousRevision = this.syncState.globalRevision;
     const result = buildStateEnvelope(
       this.syncState,
       this.getViewState(),
@@ -144,19 +145,19 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
     this.syncState = result.nextSyncState;
 
     auditLog(this.context, 'sidebar-provider', 'snapshot.postState', {
-      dirty: this.syncState.dirty,
+      globalDirty: this.syncState.globalDirty,
       posted: !!result.message,
       ready: this.webviewReady,
-      revision: this.syncState.revision,
+      revision: this.syncState.globalRevision,
       visible: this.view?.visible ?? false,
     });
 
     assertInvariant(
       this.context,
       'sidebar-provider',
-      !result.message || this.syncState.revision > previousRevision,
+      !result.message || this.syncState.globalRevision > previousRevision,
       'State snapshots must advance revision monotonically.',
-      { previousRevision, nextRevision: this.syncState.revision },
+      { previousRevision, nextRevision: this.syncState.globalRevision },
     );
 
     if (result.message && this.view) {
@@ -170,11 +171,11 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
    */
   scheduleState(): void {
     if (!this.canPostToView()) {
-      this.syncState = { ...this.syncState, dirty: true };
+      this.syncState = { ...this.syncState, globalDirty: true };
       auditLog(this.context, 'sidebar-provider', 'snapshot.markDirty', {
         reason: 'scheduleState',
         ready: this.webviewReady,
-        revision: this.syncState.revision,
+        revision: this.syncState.globalRevision,
         visible: this.view?.visible ?? false,
       });
       return;
@@ -193,32 +194,42 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
   /**
    * Post an incremental patch for high-frequency streaming updates (deltas,
    * thinking tokens, tool call state). Skipped when the view is not visible.
+   * The envelope carries `sessionPath` so the webview can route the patch to
+   * the correct per-session mirror.
    */
-  postPatch(op: PatchOp): void {
-    const previousRevision = this.syncState.revision;
-    const result = buildPatchEnvelope(this.syncState, op, this.canPostToView());
+  postPatch(sessionPath: string, op: PatchOp): void {
+    const previousRevision = this.syncState.sessions[sessionPath]?.revision ?? 0;
+    const result = buildPatchEnvelope(this.syncState, sessionPath, op, this.canPostToView());
     this.syncState = result.nextSyncState;
 
+    const nextRevision = this.syncState.sessions[sessionPath]?.revision ?? 0;
+    const sessionDirty = this.syncState.sessions[sessionPath]?.dirty ?? false;
     auditLog(this.context, 'sidebar-provider', 'patch.post', {
-      dirty: this.syncState.dirty,
+      dirty: sessionDirty,
       kind: op.kind,
+      sessionPath,
       posted: !!result.message,
       ready: this.webviewReady,
-      revision: this.syncState.revision,
+      revision: nextRevision,
       visible: this.view?.visible ?? false,
     });
 
     assertInvariant(
       this.context,
       'sidebar-provider',
-      !result.message || this.syncState.revision > previousRevision,
+      !result.message || nextRevision > previousRevision,
       'Patches must advance revision monotonically.',
-      { previousRevision, nextRevision: this.syncState.revision, kind: op.kind },
+      { previousRevision, nextRevision, kind: op.kind, sessionPath },
     );
 
     if (result.message && this.view) {
       void this.view.webview.postMessage(result.message);
     }
+  }
+
+  /** Drop sync bookkeeping for a session that was closed or invalidated. */
+  clearSessionSync(sessionPath: string): void {
+    this.syncState = clearSessionSync(this.syncState, sessionPath);
   }
 
   /**
@@ -239,10 +250,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
     this.syncState = result.nextSyncState;
 
     auditLog(this.context, 'sidebar-provider', 'snapshot.flushDirty', {
-      dirty: this.syncState.dirty,
+      globalDirty: this.syncState.globalDirty,
       posted: !!result.message,
       ready: this.webviewReady,
-      revision: this.syncState.revision,
+      revision: this.syncState.globalRevision,
       visible: this.view?.visible ?? false,
     });
 
@@ -303,12 +314,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider, vscode.D
       }
 
       this.webviewReady = false;
-      this.syncState = { ...this.syncState, dirty: true };
+      this.syncState = { ...this.syncState, globalDirty: true };
       view.webview.html = nextHtml;
 
       auditLog(this.context, 'sidebar-provider', 'hotReload.apply', {
         changedPath,
-        revision: this.syncState.revision,
+        revision: this.syncState.globalRevision,
         visible: view.visible,
       });
     } catch (error) {

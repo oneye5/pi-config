@@ -5,6 +5,16 @@
  */
 export const PROTOCOL_VERSION = 10;
 
+/**
+ * Wire-protocol version for the host↔webview channel. Bump when changing the
+ * shape of `HostToWebviewMessage` or `WebviewToHostMessage` in a way that an
+ * older webview build cannot tolerate. The webview logs a warning when the
+ * value posted by the host does not match its compiled-in expectation; it does
+ * not refuse to load (the webview is shipped together with the host so the
+ * mismatch generally indicates a stale hot-reload).
+ */
+export const WEBVIEW_PROTOCOL_VERSION = 1;
+
 export function assertProtocolVersion(peerLabel: string, protocolVersion: unknown): void {
   if (!Number.isInteger(protocolVersion)) {
     throw new Error(
@@ -609,12 +619,20 @@ export interface ViewState {
 export type HostToWebviewMessage =
   | {
       type: 'state';
+      protocolVersion: number;
       hostInstanceId: string;
       revision: number;
       state: ViewState;
     }
   | {
+      /**
+       * Patch envelope carries `sessionPath` at the envelope level (not per-op):
+       * all ops in a single envelope address the same session. The webview routes
+       * the envelope to that session's mirror.
+       */
       type: 'patch';
+      protocolVersion: number;
+      sessionPath: string;
       hostInstanceId: string;
       revision: number;
       op: PatchOp;
@@ -629,7 +647,17 @@ export type HostToWebviewMessage =
 export type WebviewToHostMessage =
   | { type: 'ready' }
   | { type: 'refreshState' }
-  | { type: 'requestSnapshot' }
+  | {
+      /**
+       * Request a state snapshot. When `sessionPath` is provided the host MAY
+       * respond with a snapshot scoped to that session; when omitted the host
+       * responds with a global snapshot (all sessions + global state). Today the
+       * host always responds with a global snapshot; the optional field is wired
+       * through so per-session snapshot recovery can land without a protocol bump.
+       */
+      type: 'requestSnapshot';
+      sessionPath?: string;
+    }
   | { type: 'openFilePicker' }
   | { type: 'openFile'; path: string }
   | { type: 'addComposerInput'; sessionPath: string; input: ComposerInputDraft }

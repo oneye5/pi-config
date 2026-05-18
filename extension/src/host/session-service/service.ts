@@ -86,6 +86,19 @@ export class SessionService implements vscode.Disposable {
     });
   }
 
+  /** Expose queue routing for the Phase 3 EffectRunner. */
+  get queues(): { enqueueLifecycle: SessionServiceState['enqueueLifecycle']; enqueueSessionOperation: SessionServiceState['enqueueSessionOperation'] } {
+    return {
+      enqueueLifecycle: (task) => this.state.enqueueLifecycle(task),
+      enqueueSessionOperation: (sessionPath, task) => this.state.enqueueSessionOperation(sessionPath, task),
+    };
+  }
+
+  /** Expose completion-notification suppression for interrupt (Phase 3). */
+  suppressNextCompletionNotificationFor(sessionPath: string): void {
+    this.state.suppressNextCompletionNotificationFor(sessionPath);
+  }
+
   async restart(): Promise<void> {
     this.events.detach();
     await this.backend.stop();
@@ -144,6 +157,10 @@ export class SessionService implements vscode.Disposable {
     await this.messages.editMessage(sessionPath, messageId, text);
   }
 
+  /**
+   * @deprecated Phase 3: interrupt now routes through the CQRS spine.
+   * See extension-host.ts handleWebviewMessage → dispatchArchEvent.
+   */
   async interrupt(sessionPath: string): Promise<void> {
     await this.messages.interrupt(sessionPath);
   }

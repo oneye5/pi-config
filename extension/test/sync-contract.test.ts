@@ -104,6 +104,7 @@ test('ChatMessage.userParts supports structured user image content', () => {
 test('HostToWebviewMessage state envelope carries hostInstanceId and revision', () => {
   const msg: HostToWebviewMessage = {
     type: 'state',
+    protocolVersion: 1,
     hostInstanceId: 'abc',
     revision: 7,
     state: {
@@ -153,6 +154,8 @@ test('HostToWebviewMessage state envelope carries hostInstanceId and revision', 
 test('HostToWebviewMessage patch envelope carries hostInstanceId and revision', () => {
   const msg: HostToWebviewMessage = {
     type: 'patch',
+    protocolVersion: 1,
+    sessionPath: '/tmp/session-a',
     hostInstanceId: 'abc',
     revision: 8,
     op: { kind: 'messageDelta', messageId: 'm1', delta: 'hello' },
@@ -160,6 +163,7 @@ test('HostToWebviewMessage patch envelope carries hostInstanceId and revision', 
   assert.equal(msg.type, 'patch');
   if (msg.type === 'patch') {
     assert.equal(msg.op.kind, 'messageDelta');
+    assert.equal(msg.sessionPath, '/tmp/session-a');
   }
 });
 
