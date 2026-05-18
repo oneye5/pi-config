@@ -1,3 +1,13 @@
+/**
+ * Bug-finding tests for validation.ts.
+ *
+ * Original tests: basic formatAvailableAgents, findSuggestedAgentName,
+ * buildUnknownAgentError, createInvalidAgentResult, summarizeInvalidAgentResults.
+ * Added: empty array for summarize (CRASH?), whitespace-only agent names,
+ * all scope keywords, empty agent list for every function, edge cases for
+ * findSuggestedAgentName with tricky inputs.
+ */
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -35,7 +45,11 @@ const MOCK_AGENTS: AgentConfig[] = [
 	},
 ];
 
-// --- formatAvailableAgents ---
+const EMPTY_AGENTS: AgentConfig[] = [];
+
+// ============================================================
+// formatAvailableAgents
+// ============================================================
 
 test("formatAvailableAgents lists quoted names", () => {
 	const result = formatAvailableAgents(MOCK_AGENTS);
@@ -46,7 +60,14 @@ test("formatAvailableAgents returns 'none' for empty list", () => {
 	assert.equal(formatAvailableAgents([]), "none");
 });
 
-// --- findSuggestedAgentName ---
+test("formatAvailableAgents handles single agent", () => {
+	const result = formatAvailableAgents([MOCK_AGENTS[0]]);
+	assert.equal(result, '"worker"');
+});
+
+// ============================================================
+// findSuggestedAgentName
+// ============================================================
 
 test("findSuggestedAgentName finds case-insensitive match", () => {
 	assert.equal(findSuggestedAgentName("Worker", MOCK_AGENTS), "worker");
@@ -61,16 +82,80 @@ test("findSuggestedAgentName trims whitespace", () => {
 	assert.equal(findSuggestedAgentName("  worker  ", MOCK_AGENTS), "worker");
 });
 
-// --- buildUnknownAgentError ---
+test("findSuggestedAgentName: empty string returns undefined", () => {
+	assert.equal(findSuggestedAgentName("", MOCK_AGENTS), undefined);
+});
+
+test("findSuggestedAgentName: whitespace-only string returns undefined", () => {
+	assert.equal(findSuggestedAgentName("   ", MOCK_AGENTS), undefined);
+});
+
+test("findSuggestedAgentName: empty agent list returns undefined", () => {
+	assert.equal(findSuggestedAgentName("worker", EMPTY_AGENTS), undefined);
+	assert.equal(findSuggestedAgentName("", EMPTY_AGENTS), undefined);
+});
+
+test("findSuggestedAgentName: exact match is found", () => {
+	// The function normalizes to lowercase; an exact match of the lowercased name
+	assert.equal(findSuggestedAgentName("worker", MOCK_AGENTS), "worker");
+});
+
+test("findSuggestedAgentName: partial substring does NOT match", () => {
+	// "work" !== "worker" even after lowercasing
+	assert.equal(findSuggestedAgentName("work", MOCK_AGENTS), undefined);
+	assert.equal(findSuggestedAgentName("revie", MOCK_AGENTS), undefined);
+});
+
+test("findSuggestedAgentName: superstring does NOT match", () => {
+	assert.equal(findSuggestedAgentName("workers", MOCK_AGENTS), undefined);
+});
+
+test("findSuggestedAgentName: unicode characters in comparison", () => {
+	const agents: AgentConfig[] = [
+		{ name: "über-agent", description: "unicode", systemPrompt: "", source: "user", filePath: "/a.md" },
+	];
+	// Case-insensitive comparison with unicode — lowercasing may not handle ß/Ü correctly
+	// This tests that the simple .toLowerCase() works for basic Latin-1
+	const result = findSuggestedAgentName("Über-Agent", agents);
+	// May or may not find it depending on locale; document the behavior
+	assert.ok(result === "über-agent" || result === undefined,
+		`Unicode case folding: got ${result}, either exact match or undefined is acceptable`);
+});
+
+test("findSuggestedAgentName: agents with duplicate-like names", () => {
+	const agents: AgentConfig[] = [
+		{ name: "agent1", description: "a", systemPrompt: "", source: "user", filePath: "/a.md" },
+		{ name: "agent2", description: "b", systemPrompt: "", source: "user", filePath: "/b.md" },
+		{ name: "agent", description: "c", systemPrompt: "", source: "user", filePath: "/c.md" },
+	];
+	assert.equal(findSuggestedAgentName("Agent1", agents), "agent1");
+	assert.equal(findSuggestedAgentName("Agent", agents), "agent");
+	// Should NOT match "agent2" for "Agent" input
+	assert.notEqual(findSuggestedAgentName("Agent", agents), "agent2");
+});
+
+// ============================================================
+// buildUnknownAgentError — SCOPE KEYWORD DETECTION
+// ============================================================
 
 test("buildUnknownAgentError suggests correct name on case mismatch", () => {
 	const err = buildUnknownAgentError("Worker", MOCK_AGENTS);
 	assert.match(err, /Did you mean "worker"/);
 });
 
-test("buildUnknownAgentError detects scope keyword misuse", () => {
+test("buildUnknownAgentError detects 'user' as scope keyword", () => {
+	const err = buildUnknownAgentError("user", MOCK_AGENTS);
+	assert.match(err, /agentScope value, not an agent name/);
+});
+
+test("buildUnknownAgentError detects 'project' as scope keyword", () => {
+	const err = buildUnknownAgentError("project", MOCK_AGENTS);
+	assert.match(err, /agentScope value, not an agent name/);
+});
+
+test("buildUnknownAgentError detects 'both' as scope keyword", () => {
 	const err = buildUnknownAgentError("both", MOCK_AGENTS);
-	assert.match(err, /is an agentScope value, not an agent name/);
+	assert.match(err, /agentScope value, not an agent name/);
 });
 
 test("buildUnknownAgentError includes worker hint when worker exists", () => {
@@ -89,7 +174,45 @@ test("buildUnknownAgentError lists available agents", () => {
 	assert.match(err, /Available agents: "worker", "reviewer", "scout"/);
 });
 
-// --- createInvalidAgentResult ---
+test("buildUnknownAgentError: empty agents list", () => {
+	const err = buildUnknownAgentError("any-agent", EMPTY_AGENTS);
+	assert.match(err, /Unknown agent/);
+	assert.match(err, /Available agents: none/);
+	assert.doesNotMatch(err, /try "worker"/);
+});
+
+test("buildUnknownAgentError: scope keyword with empty agents still detected", () => {
+	const err = buildUnknownAgentError("user", EMPTY_AGENTS);
+	assert.match(err, /agentScope value, not an agent name/);
+});
+
+test("buildUnknownAgentError: exact name that exists but scope keyword collision", () => {
+	// If an agent is literally named "user", "project", or "both" — the scope check
+	// fires first, which might be a false positive
+	const agentsWithUser: AgentConfig[] = [
+		{ name: "user", description: "An agent named user", systemPrompt: "", source: "user", filePath: "/a.md" },
+	];
+	const err = buildUnknownAgentError("user", agentsWithUser);
+	// BUG?: Even though "user" is a valid agent, the scope keyword check fires first
+	// and produces a misleading error suggesting you can't use "user" as an agent name
+	// This is actually a design issue — agents named after scope values are ambiguous
+	assert.match(err, /agentScope value, not an agent name/);
+});
+
+test("buildUnknownAgentError: whitespace-only agent name", () => {
+	const err = buildUnknownAgentError("   ", MOCK_AGENTS);
+	assert.match(err, /Unknown agent/);
+	assert.doesNotMatch(err, /agentScope value/); // "   " is not a scope value
+});
+
+test("buildUnknownAgentError: empty string agent name", () => {
+	const err = buildUnknownAgentError("", MOCK_AGENTS);
+	assert.match(err, /Unknown agent/);
+});
+
+// ============================================================
+// createInvalidAgentResult
+// ============================================================
 
 test("createInvalidAgentResult builds error result with stderr", () => {
 	const result = createInvalidAgentResult("bad-agent", "do stuff", MOCK_AGENTS);
@@ -113,7 +236,29 @@ test("createInvalidAgentResult omits step when not provided", () => {
 	assert.equal(result.step, undefined);
 });
 
-// --- summarizeInvalidAgentResults ---
+test("createInvalidAgentResult: zero step number is valid", () => {
+	const result = createInvalidAgentResult("bad-agent", "task", MOCK_AGENTS, 0);
+	assert.equal(result.step, 0);
+});
+
+test("createInvalidAgentResult: negative step number", () => {
+	const result = createInvalidAgentResult("bad-agent", "task", MOCK_AGENTS, -1);
+	assert.equal(result.step, -1);
+});
+
+test("createInvalidAgentResult: task can be empty string", () => {
+	const result = createInvalidAgentResult("bad-agent", "", MOCK_AGENTS);
+	assert.equal(result.task, "");
+});
+
+test("createInvalidAgentResult: result for scope keyword misuse includes specific error", () => {
+	const result = createInvalidAgentResult("both", "do work", MOCK_AGENTS);
+	assert.match(result.stderr, /agentScope value, not an agent name/);
+});
+
+// ============================================================
+// summarizeInvalidAgentResults — CRASH CASES
+// ============================================================
 
 test("summarizeInvalidAgentResults returns single error directly", () => {
 	const results = [createInvalidAgentResult("x", "t", MOCK_AGENTS)];
@@ -131,4 +276,37 @@ test("summarizeInvalidAgentResults wraps multiple errors", () => {
 	assert.match(summary, /Invalid agent names in 2 subagent tasks/);
 	assert.match(summary, /\[bad1\]/);
 	assert.match(summary, /\[bad2\]/);
+});
+
+test("summarizeInvalidAgentResults: EMPTY ARRAY — will this crash?", () => {
+	// The code does: if (results.length === 1) return results[0].stderr
+	// If results.length === 0, it falls to the `else` branch and builds:
+	//   `Invalid agent names in ${results.length} subagent tasks.`
+	//   followed by results.map(...).join("\n") which yields ""
+	// Result: "Invalid agent names in 0 subagent tasks.\n\n"
+	// This is a minor bug: produces a confusing message for 0 invalid results
+	const summary = summarizeInvalidAgentResults([]);
+	assert.ok(summary.length > 0, "Should produce some output, not crash");
+	assert.match(summary, /Invalid agent names in 0/);
+});
+
+test("summarizeInvalidAgentResults: single result with empty stderr", () => {
+	// This shouldn't happen through createInvalidAgentResult (which always sets stderr)
+	// but if someone constructs a SingleResult with empty stderr, the summary would
+	// be empty string for a single result
+	const emptyStderr = { ...createInvalidAgentResult("x", "t", MOCK_AGENTS), stderr: "" };
+	const summary = summarizeInvalidAgentResults([emptyStderr]);
+	assert.equal(summary, "");
+});
+
+test("summarizeInvalidAgentResults: many results", () => {
+	const results = Array.from({ length: 50 }, (_, i) =>
+		createInvalidAgentResult(`bad-${i}`, `task-${i}`, MOCK_AGENTS),
+	);
+	const summary = summarizeInvalidAgentResults(results);
+	assert.match(summary, /Invalid agent names in 50 subagent tasks/);
+	// Should include all 50 agent names
+	for (let i = 0; i < 50; i++) {
+		assert.match(summary, new RegExp(`\\[bad-${i}\\]`));
+	}
 });
